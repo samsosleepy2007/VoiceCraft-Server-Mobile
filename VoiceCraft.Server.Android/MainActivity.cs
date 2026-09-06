@@ -112,9 +112,9 @@ public sealed class MainActivity : Activity
         var row = new LinearLayout(this)
         {
             Orientation = Orientation.Horizontal,
-            Gravity = GravityFlags.CenterVertical,
             Background = Solid(Color.White)
         };
+        row.SetGravity(GravityFlags.CenterVertical);
         row.SetPadding(Dp(20), Dp(8), Dp(20), Dp(8));
 
         var text = new LinearLayout(this) { Orientation = Orientation.Vertical };
@@ -135,9 +135,9 @@ public sealed class MainActivity : Activity
         var nav = new LinearLayout(this)
         {
             Orientation = Orientation.Horizontal,
-            Gravity = GravityFlags.Center,
             Background = Solid(Color.White)
         };
+        nav.SetGravity(GravityFlags.Center);
         nav.SetPadding(Dp(7), Dp(7), Dp(7), Dp(7));
         AddNav(nav, "HOME", 0);
         AddNav(nav, "BRIDGE", 1);
@@ -399,7 +399,8 @@ public sealed class MainActivity : Activity
 
     private LinearLayout Metric(string value, string caption, out TextView valueView)
     {
-        var box = new LinearLayout(this) { Orientation = Orientation.Vertical, Gravity = GravityFlags.Center };
+        var box = new LinearLayout(this) { Orientation = Orientation.Vertical };
+        box.SetGravity(GravityFlags.Center);
         box.SetPadding(Dp(4), Dp(14), Dp(4), Dp(4));
         valueView = Label(value, 18, Ink, true);
         valueView.Gravity = GravityFlags.Center;
@@ -458,7 +459,8 @@ public sealed class MainActivity : Activity
 
     private LinearLayout ButtonRow()
     {
-        var row = new LinearLayout(this) { Orientation = Orientation.Horizontal, Gravity = GravityFlags.CenterVertical };
+        var row = new LinearLayout(this) { Orientation = Orientation.Horizontal };
+        row.SetGravity(GravityFlags.CenterVertical);
         row.SetPadding(0, Dp(12), 0, 0);
         return row;
     }
