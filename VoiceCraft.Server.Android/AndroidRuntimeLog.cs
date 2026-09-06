@@ -44,10 +44,14 @@ public static class AndroidRuntimeLog
     public static void Append(string category, string message)
         => Append($"{category}: {message}");
 
-    public static string Snapshot()
+    public static string Snapshot() => Snapshot(false);
+
+    public static string Snapshot(bool thai)
     {
+        string raw;
         lock (Sync)
-            return string.Join("\n", Lines);
+            raw = string.Join("\n", Lines);
+        return RuntimeDiagnostics.TranslateSnapshot(raw, thai);
     }
 
     public static void Clear()
