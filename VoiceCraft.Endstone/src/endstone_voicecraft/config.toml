@@ -1,0 +1,10 @@
+[tracking]
+interval_ticks = 2
+position_epsilon = 0.05
+rotation_epsilon = 1.0
+log_position_changes = false
+heartbeat_seconds = 30
+
+[binding]
+min_key_length = 4
+max_key_length = 128
