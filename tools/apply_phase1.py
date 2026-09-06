@@ -17,6 +17,14 @@ def write(path: Path, content: str) -> None:
     path.write_text(content, encoding="utf-8")
 
 
+def patch_server_project(root: Path) -> None:
+    path = root / "VoiceCraft.Server/VoiceCraft.Server.csproj"
+    # The Android APK is self-contained. .NET does not allow a self-contained
+    # executable to reference the upstream framework-dependent server EXE.
+    # For the mobile host the server assembly is embedded, so build it as a DLL.
+    replace_once(path, "        <OutputType>Exe</OutputType>", "        <OutputType>Library</OutputType>")
+
+
 def patch_program(root: Path) -> None:
     path = root / "VoiceCraft.Server/Program.cs"
     replace_once(path,
@@ -238,6 +246,7 @@ def main() -> None:
     root = Path(args.repo).resolve()
 
     required = [
+        root / "VoiceCraft.Server/VoiceCraft.Server.csproj",
         root / "VoiceCraft.Server/App.cs",
         root / "VoiceCraft.Server/Program.cs",
         root / "VoiceCraft.Server/ServerProperties.cs",
@@ -248,6 +257,7 @@ def main() -> None:
     if missing:
         raise SystemExit("Not a VoiceCraft v1.7.1 checkout; missing:\n" + "\n".join(missing))
 
+    patch_server_project(root)
     patch_program(root)
     patch_server_properties(root)
     patch_log_service(root)
