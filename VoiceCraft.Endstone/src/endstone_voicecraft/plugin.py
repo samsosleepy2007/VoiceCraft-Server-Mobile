@@ -14,7 +14,7 @@ from .model import PlayerState
 
 class VoiceCraftEndstone(Plugin):
     prefix = "VoiceCraftEndstone"
-    version = "0.1.0"
+    version = "0.1.1"
     api_version = "0.11"
     description = "VoiceCraft Endstone player-state bridge diagnostics"
     authors = ["SamSoSleepy"]
@@ -284,9 +284,7 @@ class VoiceCraftEndstone(Plugin):
                     f"You: dim={state.dimension} pos=({state.x:.2f}, {state.y:.2f}, {state.z:.2f}) "
                     f"yaw={state.yaw:.1f} pitch={state.pitch:.1f}"
                 )
-            sender.send_message(
-                "Pending binding: " + ("yes" if key in self._pending_bind_keys else "no")
-            )
+            sender.send_message("Pending binding: " + ("yes" if key in self._pending_bind_keys else "no"))
         return True
 
     def _command_dump(self, sender: CommandSender) -> bool:
