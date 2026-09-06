@@ -5,6 +5,7 @@ using Android;
 using Android.App;
 using Android.Content;
 using Android.Content.PM;
+using Android.Graphics;
 using Android.OS;
 using Android.Text;
 using Android.Widget;
@@ -22,10 +23,12 @@ public sealed class MainActivity : Activity
 {
     private TextView? _status;
     private TextView? _connectionInfo;
+    private TextView? _logView;
     private EditText? _port;
     private EditText? _serverKey;
     private Handler? _handler;
     private IRunnable? _refreshRunnable;
+    private long _renderedLogVersion = -1;
 
     protected override void OnCreate(Bundle? savedInstanceState)
     {
@@ -33,6 +36,7 @@ public sealed class MainActivity : Activity
         BuildUi();
         RequestNotificationPermission();
         StartRefreshLoop();
+        AndroidRuntimeLog.Append("UI", "MainActivity opened");
     }
 
     private void BuildUi()
@@ -47,7 +51,7 @@ public sealed class MainActivity : Activity
 
         root.AddView(new TextView(this)
         {
-            Text = "VoiceCraft Server • Android Phase 1",
+            Text = "VoiceCraft Server • Android Diagnostics",
             TextSize = 22
         });
 
@@ -88,9 +92,40 @@ public sealed class MainActivity : Activity
         copy.Click += (_, _) => CopyConnectionInfo();
         root.AddView(copy);
 
+        var logHeader = new TextView(this)
+        {
+            Text = "Runtime / McHttp Log",
+            TextSize = 16
+        };
+        logHeader.SetPadding(0, Dp(18), 0, Dp(6));
+        root.AddView(logHeader);
+
+        _logView = new TextView(this)
+        {
+            TextSize = 11,
+            Typeface = Typeface.Monospace,
+            MinHeight = Dp(240)
+        };
+        _logView.SetTextIsSelectable(true);
+        _logView.SetPadding(Dp(10), Dp(10), Dp(10), Dp(10));
+        root.AddView(_logView);
+
+        var copyLog = new Button(this) { Text = "COPY LOG" };
+        copyLog.Click += (_, _) => CopyLog();
+        root.AddView(copyLog);
+
+        var clearLog = new Button(this) { Text = "CLEAR LOG" };
+        clearLog.Click += (_, _) =>
+        {
+            AndroidRuntimeLog.Clear();
+            AndroidRuntimeLog.Append("UI", "Log cleared");
+            RefreshLog(true);
+        };
+        root.AddView(clearLog);
+
         var note = new TextView(this)
         {
-            Text = "Phase 1 is LAN-first. Set battery usage to Unrestricted for reliable background hosting.",
+            Text = "Diagnostics never intentionally print the McHttp login token. For LAN hosting, set battery usage to Unrestricted.",
             TextSize = 13
         };
         note.SetPadding(0, Dp(16), 0, 0);
@@ -98,6 +133,7 @@ public sealed class MainActivity : Activity
 
         SetContentView(scroll);
         RefreshUi();
+        RefreshLog(true);
     }
 
     private void StartServer()
@@ -116,6 +152,7 @@ public sealed class MainActivity : Activity
                 _serverKey.Text = key;
         }
 
+        AndroidRuntimeLog.Append("UI", $"START SERVER pressed; port={port}");
         ServerPreferences.Save(this, port, key);
         var intent = new Intent(this, typeof(VoiceCraftServerService));
         intent.PutExtra(ServerPreferences.ExtraVoicePort, port);
@@ -129,10 +166,12 @@ public sealed class MainActivity : Activity
             StartService(intent);
 
         RefreshUi();
+        RefreshLog(true);
     }
 
     private void StopServer()
     {
+        AndroidRuntimeLog.Append("UI", "STOP SERVER pressed");
         VoiceCraft.Server.App.Shutdown();
         StopService(new Intent(this, typeof(VoiceCraftServerService)));
         RefreshUi();
@@ -151,7 +190,7 @@ public sealed class MainActivity : Activity
             _status.Text = VoiceCraftServerService.LastError != null
                 ? $"Status: ERROR\n{VoiceCraftServerService.LastError}"
                 : running
-                    ? $"Status: RUNNING • Clients {VcServerApp.ConnectedClients}"
+                    ? $"Status: RUNNING • Voice clients {VcServerApp.ConnectedClients}"
                     : service ? "Status: STARTING…" : "Status: STOPPED";
         }
 
@@ -162,8 +201,24 @@ public sealed class MainActivity : Activity
                 $"Voice client: {ip}:{port} (UDP)\n" +
                 $"McHttp: http://{ip}:{port} (TCP)\n" +
                 $"Server key: {key}\n\n" +
-                $"Bedrock command:\n/voicecraft:vcconnect \"http://{ip}:{port}\" \"{key}\"\n";
+                $"Bedrock Dedicated Server command:\n/voicecraft:vcconnect \"http://{ip}:{port}\" \"{key}\"\n";
         }
+
+        RefreshLog();
+    }
+
+    private void RefreshLog(bool force = false)
+    {
+        if (_logView == null)
+            return;
+
+        var version = AndroidRuntimeLog.Version;
+        if (!force && version == _renderedLogVersion)
+            return;
+
+        _renderedLogVersion = version;
+        var text = AndroidRuntimeLog.Snapshot();
+        _logView.Text = string.IsNullOrWhiteSpace(text) ? "(no log entries yet)" : text;
     }
 
     private void CopyConnectionInfo()
@@ -176,7 +231,23 @@ public sealed class MainActivity : Activity
         if (GetSystemService(ClipboardService) is global::Android.Content.ClipboardManager clipboard)
         {
             clipboard.PrimaryClip = ClipData.NewPlainText("VoiceCraft connection", text);
-            Toast.MakeText(this, "Copied", ToastLength.Short)?.Show();
+            Toast.MakeText(this, "Connection info copied", ToastLength.Short)?.Show();
+        }
+    }
+
+    private void CopyLog()
+    {
+        var text = AndroidRuntimeLog.Snapshot();
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            Toast.MakeText(this, "Log is empty", ToastLength.Short)?.Show();
+            return;
+        }
+
+        if (GetSystemService(ClipboardService) is global::Android.Content.ClipboardManager clipboard)
+        {
+            clipboard.PrimaryClip = ClipData.NewPlainText("VoiceCraft Server log", text);
+            Toast.MakeText(this, "Log copied", ToastLength.Short)?.Show();
         }
     }
 
@@ -187,7 +258,7 @@ public sealed class MainActivity : Activity
         {
             RefreshUi();
             if (_handler != null && _refreshRunnable != null)
-                _handler.PostDelayed(_refreshRunnable, 1000);
+                _handler.PostDelayed(_refreshRunnable, 750);
         });
         _handler.Post(_refreshRunnable);
     }
