@@ -8,3 +8,11 @@ heartbeat_seconds = 30
 [binding]
 min_key_length = 4
 max_key_length = 128
+
+[bridge]
+# Enable after deploying VoiceCraft.Bridge.Relay to Render.
+enabled = false
+url = "wss://YOUR-RELAY.onrender.com/bridge"
+server_id = "mcsv-main"
+secret = "CHANGE_ME_TO_THE_SAME_BRIDGE_SECRET"
+reconnect_seconds = 5
