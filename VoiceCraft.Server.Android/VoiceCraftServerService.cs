@@ -1,7 +1,9 @@
+using System.Net.Http;
 using Android.App;
 using Android.Content;
 using Android.Content.PM;
 using Android.OS;
+using VoiceCraft.Network.Servers;
 using VoiceCraft.Server;
 using VcServerApp = VoiceCraft.Server.App;
 
@@ -28,6 +30,7 @@ public sealed class VoiceCraftServerService : Service
     {
         if (intent?.Action == ServerPreferences.ActionStop)
         {
+            AndroidRuntimeLog.Append("SERVICE", "Stop action received");
             VcServerApp.Shutdown();
             StopSelf();
             return StartCommandResult.NotSticky;
@@ -37,7 +40,10 @@ public sealed class VoiceCraftServerService : Service
         StartForeground(NotificationId, BuildNotification("Starting VoiceCraft server…"));
 
         if (_serverTask is { IsCompleted: false })
+        {
+            AndroidRuntimeLog.Append("SERVICE", "Start ignored: server task is already active");
             return StartCommandResult.Sticky;
+        }
 
         var port = intent?.GetIntExtra(ServerPreferences.ExtraVoicePort, -1) ?? -1;
         if (port is < 1 or > 65535)
@@ -50,6 +56,8 @@ public sealed class VoiceCraftServerService : Service
         ServerPreferences.Save(this, port, key);
         IsServiceRunning = true;
         LastError = null;
+        AndroidRuntimeLog.Append("SERVICE", $"Starting foreground server on port {port}");
+        AndroidRuntimeLog.Append("SERVICE", $"App data: {FilesDir?.AbsolutePath ?? "(unknown)"}");
         AcquireWakeLock();
 
         _notificationCts?.Cancel();
@@ -65,7 +73,17 @@ public sealed class VoiceCraftServerService : Service
     {
         try
         {
+            AndroidRuntimeLog.Append("RUNTIME", "Initializing VoiceCraft v1.7.1 server runtime");
             Program.InitializeRuntime(FilesDir?.AbsolutePath);
+            ServerConsole.Sink = AndroidRuntimeLog.Append;
+            HttpMcApiServer.DiagnosticLog = AndroidRuntimeLog.Append;
+
+            AndroidRuntimeLog.Append("VOICE", $"Requested UDP listener 0.0.0.0:{port}");
+            AndroidRuntimeLog.Append("McHttp", $"Requested HTTP listener 0.0.0.0:{port}");
+            AndroidRuntimeLog.Append("SECURITY", "Login token loaded (value hidden from log)");
+
+            _ = ProbeMcHttpAsync(port);
+
             await VcServerApp.Start(new RuntimeOptions
             {
                 Headless = true,
@@ -76,16 +94,51 @@ public sealed class VoiceCraftServerService : Service
                 VoicePort = (uint)port,
                 ServerKey = key
             });
+
+            AndroidRuntimeLog.Append("RUNTIME", "VoiceCraft server loop ended normally");
         }
         catch (Exception ex)
         {
             LastError = ex.ToString();
+            AndroidRuntimeLog.Append("FATAL", ex.ToString());
         }
         finally
         {
+            ServerConsole.Sink = null;
+            HttpMcApiServer.DiagnosticLog = null;
             IsServiceRunning = false;
             _notificationCts?.Cancel();
+            AndroidRuntimeLog.Append("SERVICE", "Server task stopped");
             StopSelf();
+        }
+    }
+
+    /// <summary>
+    /// Probes the McHttp listener from inside the same Android process. A 403 is
+    /// expected for GET and proves HttpListener accepted a TCP/HTTP connection.
+    /// This helps distinguish server-listener failures from Minecraft-side
+    /// networking restrictions.
+    /// </summary>
+    private static async Task ProbeMcHttpAsync(int port)
+    {
+        await Task.Delay(1200);
+        using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(2) };
+
+        for (var attempt = 1; attempt <= 3; attempt++)
+        {
+            try
+            {
+                using var response = await client.GetAsync($"http://127.0.0.1:{port}/");
+                AndroidRuntimeLog.Append(
+                    "PROBE",
+                    $"McHttp localhost reachable: HTTP {(int)response.StatusCode} {response.StatusCode} (attempt {attempt})");
+                return;
+            }
+            catch (Exception ex)
+            {
+                AndroidRuntimeLog.Append("PROBE", $"McHttp localhost attempt {attempt} failed: {ex.GetType().Name}: {ex.Message}");
+                await Task.Delay(700);
+            }
         }
     }
 
@@ -161,17 +214,22 @@ public sealed class VoiceCraftServerService : Service
         _wakeLock = powerManager.NewWakeLock(WakeLockFlags.Partial, "VoiceCraftServer:Runtime");
         _wakeLock?.SetReferenceCounted(false);
         _wakeLock?.Acquire();
+        AndroidRuntimeLog.Append("POWER", "Partial wake lock acquired");
     }
 
     public override void OnDestroy()
     {
+        AndroidRuntimeLog.Append("SERVICE", "Android service OnDestroy");
         VcServerApp.Shutdown();
         _notificationCts?.Cancel();
         _notificationCts?.Dispose();
         _notificationCts = null;
 
         if (_wakeLock?.IsHeld == true)
+        {
             _wakeLock.Release();
+            AndroidRuntimeLog.Append("POWER", "Partial wake lock released");
+        }
         _wakeLock?.Dispose();
         _wakeLock = null;
 
