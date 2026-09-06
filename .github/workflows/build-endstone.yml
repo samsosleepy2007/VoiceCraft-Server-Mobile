@@ -3,7 +3,7 @@ name: Build Endstone Plugin
 on:
   workflow_dispatch:
   push:
-    branches: [main, endstone-phase1]
+    branches: [main, endstone-phase2]
     paths:
       - "VoiceCraft.Endstone/**"
       - ".github/workflows/build-endstone.yml"
@@ -25,12 +25,12 @@ jobs:
       - name: Install build and Endstone API
         run: |
           python -m pip install --upgrade pip
-          python -m pip install build "endstone==0.11.10"
+          python -m pip install build "endstone==0.11.10" "aiohttp>=3.9"
 
       - name: Compile plugin source
         run: python -m compileall -q VoiceCraft.Endstone/src
 
-      - name: Validate Endstone event annotations
+      - name: Validate Endstone event annotations and spawn filter
         env:
           PYTHONPATH: VoiceCraft.Endstone/src
         run: |
@@ -38,6 +38,9 @@ jobs:
           import inspect
           from endstone.event import PlayerJoinEvent, PlayerQuitEvent
           from endstone_voicecraft.listener import VoiceCraftListener
+          from endstone_voicecraft.model import PlayerState
+          from endstone_voicecraft.plugin import VoiceCraftEndstone
+          from endstone_voicecraft.bridge import EndstoneRelayClient
 
           join_annotation = inspect.signature(VoiceCraftListener.on_player_join).parameters["event"].annotation
           quit_annotation = inspect.signature(VoiceCraftListener.on_player_quit).parameters["event"].annotation
@@ -45,7 +48,13 @@ jobs:
           assert quit_annotation is PlayerQuitEvent, repr(quit_annotation)
           assert inspect.isclass(join_annotation)
           assert inspect.isclass(quit_annotation)
-          print("Endstone event handler annotations resolve to runtime classes")
+
+          valid = PlayerState("Test", "1", "u", "Overworld", 0.0, 70.0, 0.0, 5.0, -2.0)
+          sentinel = PlayerState("Test", "1", "u", "Overworld", 0.0, 32768.0, 0.0, 0.0, 0.0)
+          assert VoiceCraftEndstone._valid_state(valid)
+          assert not VoiceCraftEndstone._valid_state(sentinel)
+          assert EndstoneRelayClient is not None
+          print("Endstone Phase 2 annotations, bridge import, and pre-spawn filter OK")
           PY
 
       - name: Build wheel
@@ -64,6 +73,7 @@ jobs:
           with zipfile.ZipFile(wheel) as zf:
               names = set(zf.namelist())
               assert "endstone_voicecraft/config.toml" in names, names
+              assert "endstone_voicecraft/bridge.py" in names, names
               entry = [name for name in names if name.endswith(".dist-info/entry_points.txt")]
               assert entry, names
               text = zf.read(entry[0]).decode("utf-8")
@@ -76,17 +86,19 @@ jobs:
           from endstone.event import PlayerJoinEvent, PlayerQuitEvent
           from endstone_voicecraft import VoiceCraftEndstone
           from endstone_voicecraft.listener import VoiceCraftListener
+          from endstone_voicecraft.bridge import EndstoneRelayClient
 
           assert VoiceCraftEndstone.api_version == "0.11"
-          assert VoiceCraftEndstone.version == "0.1.1"
+          assert VoiceCraftEndstone.version == "0.2.0"
           assert inspect.signature(VoiceCraftListener.on_player_join).parameters["event"].annotation is PlayerJoinEvent
           assert inspect.signature(VoiceCraftListener.on_player_quit).parameters["event"].annotation is PlayerQuitEvent
-          print("Endstone plugin import and event annotations OK")
+          assert EndstoneRelayClient is not None
+          print("Endstone Phase 2 wheel import and event annotations OK")
           PY
 
       - name: Upload Endstone wheel
         uses: actions/upload-artifact@v4
         with:
-          name: VoiceCraft-Endstone-Phase1
+          name: VoiceCraft-Endstone-Phase2
           if-no-files-found: error
           path: VoiceCraft.Endstone/dist/*.whl
