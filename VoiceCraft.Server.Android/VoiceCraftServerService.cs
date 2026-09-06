@@ -107,7 +107,7 @@ public sealed class VoiceCraftServerService : Service
                 await Task.Delay(1000, token);
             }
         }
-        catch (OperationCanceledException)
+        catch (System.OperationCanceledException)
         {
             // Normal service shutdown.
         }
