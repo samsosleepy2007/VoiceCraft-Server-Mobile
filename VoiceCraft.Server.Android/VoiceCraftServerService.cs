@@ -1,4 +1,5 @@
-using System.Net.Http;
+using System.Net.Sockets;
+using System.Text;
 using Android.App;
 using Android.Content;
 using Android.Content.PM;
@@ -82,7 +83,7 @@ public sealed class VoiceCraftServerService : Service
             AndroidRuntimeLog.Append("McHttp", $"Requested HTTP listener 0.0.0.0:{port}");
             AndroidRuntimeLog.Append("SECURITY", "Login token loaded (value hidden from log)");
 
-            _ = ProbeMcHttpAsync(port);
+            _ = ProbeMcHttpTcpAsync(port);
 
             await VcServerApp.Start(new RuntimeOptions
             {
@@ -114,29 +115,42 @@ public sealed class VoiceCraftServerService : Service
     }
 
     /// <summary>
-    /// Probes the McHttp listener from inside the same Android process. A 403 is
-    /// expected for GET and proves HttpListener accepted a TCP/HTTP connection.
-    /// This helps distinguish server-listener failures from Minecraft-side
-    /// networking restrictions.
+    /// Uses a raw TCP socket so Android cleartext HTTP policy cannot create a
+    /// false-negative probe. After the TCP connection succeeds we send a
+    /// minimal HTTP/1.1 GET request. A 403 response is expected and proves
+    /// the McHttp listener is reachable inside the Android process.
     /// </summary>
-    private static async Task ProbeMcHttpAsync(int port)
+    private static async Task ProbeMcHttpTcpAsync(int port)
     {
         await Task.Delay(1200);
-        using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(2) };
 
         for (var attempt = 1; attempt <= 3; attempt++)
         {
             try
             {
-                using var response = await client.GetAsync($"http://127.0.0.1:{port}/");
-                AndroidRuntimeLog.Append(
-                    "PROBE",
-                    $"McHttp localhost reachable: HTTP {(int)response.StatusCode} {response.StatusCode} (attempt {attempt})");
+                using var tcp = new TcpClient(AddressFamily.InterNetwork);
+                using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+                await tcp.ConnectAsync("127.0.0.1", port, timeout.Token);
+                AndroidRuntimeLog.Append("PROBE", $"TCP 127.0.0.1:{port} connected (attempt {attempt})");
+
+                using var stream = tcp.GetStream();
+                var request = Encoding.ASCII.GetBytes(
+                    $"GET / HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n");
+                await stream.WriteAsync(request, timeout.Token);
+                await stream.FlushAsync(timeout.Token);
+
+                var buffer = new byte[1024];
+                var read = await stream.ReadAsync(buffer, timeout.Token);
+                var firstLine = read > 0
+                    ? Encoding.ASCII.GetString(buffer, 0, read).Split("\r\n", 2)[0]
+                    : "(empty HTTP response)";
+
+                AndroidRuntimeLog.Append("PROBE", $"McHttp raw HTTP response: {firstLine}");
                 return;
             }
             catch (Exception ex)
             {
-                AndroidRuntimeLog.Append("PROBE", $"McHttp localhost attempt {attempt} failed: {ex.GetType().Name}: {ex.Message}");
+                AndroidRuntimeLog.Append("PROBE", $"TCP localhost attempt {attempt} failed: {ex.GetType().Name}: {ex.Message}");
                 await Task.Delay(700);
             }
         }
@@ -180,14 +194,16 @@ public sealed class VoiceCraftServerService : Service
             builder = new Notification.Builder(this, ChannelId);
 #pragma warning restore CA1416
         else
+#pragma warning disable CS0618
             builder = new Notification.Builder(this);
+#pragma warning restore CS0618
 
         return builder
             .SetContentTitle("VoiceCraft Server")
             .SetContentText(text)
-            .SetContentIntent(contentIntent)
-            .SetSmallIcon(global::Android.Resource.Drawable.IcDialogInfo)
+            .SetSmallIcon(global::Android.Resource.Drawable.IcMediaPlay)
             .SetOngoing(true)
+            .SetContentIntent(contentIntent)
             .Build();
     }
 
@@ -199,7 +215,7 @@ public sealed class VoiceCraftServerService : Service
 #pragma warning disable CA1416
         var channel = new NotificationChannel(ChannelId, "VoiceCraft Server", NotificationImportance.Low)
         {
-            Description = "Keeps the VoiceCraft server running in the background."
+            Description = "Keeps the VoiceCraft server running in the background"
         };
         if (GetSystemService(NotificationService) is NotificationManager manager)
             manager.CreateNotificationChannel(channel);
@@ -208,31 +224,49 @@ public sealed class VoiceCraftServerService : Service
 
     private void AcquireWakeLock()
     {
-        if (GetSystemService(PowerService) is not PowerManager powerManager)
-            return;
+        try
+        {
+            if (GetSystemService(PowerService) is not PowerManager powerManager)
+                return;
 
-        _wakeLock = powerManager.NewWakeLock(WakeLockFlags.Partial, "VoiceCraftServer:Runtime");
-        _wakeLock?.SetReferenceCounted(false);
-        _wakeLock?.Acquire();
-        AndroidRuntimeLog.Append("POWER", "Partial wake lock acquired");
+#pragma warning disable CA1416
+            _wakeLock = powerManager.NewWakeLock(WakeLockFlags.Partial, "VoiceCraftServer::WakeLock");
+            _wakeLock?.Acquire();
+#pragma warning restore CA1416
+            AndroidRuntimeLog.Append("POWER", "Partial wake lock acquired");
+        }
+        catch (Exception ex)
+        {
+            AndroidRuntimeLog.Append("POWER", $"Wake lock unavailable: {ex.Message}");
+        }
+    }
+
+    private void ReleaseWakeLock()
+    {
+        try
+        {
+            if (_wakeLock?.IsHeld == true)
+                _wakeLock.Release();
+        }
+        catch
+        {
+            // Ignore shutdown cleanup errors.
+        }
+        finally
+        {
+            _wakeLock?.Dispose();
+            _wakeLock = null;
+        }
     }
 
     public override void OnDestroy()
     {
-        AndroidRuntimeLog.Append("SERVICE", "Android service OnDestroy");
-        VcServerApp.Shutdown();
+        AndroidRuntimeLog.Append("SERVICE", "Foreground service destroyed");
         _notificationCts?.Cancel();
         _notificationCts?.Dispose();
         _notificationCts = null;
-
-        if (_wakeLock?.IsHeld == true)
-        {
-            _wakeLock.Release();
-            AndroidRuntimeLog.Append("POWER", "Partial wake lock released");
-        }
-        _wakeLock?.Dispose();
-        _wakeLock = null;
-
+        VcServerApp.Shutdown();
+        ReleaseWakeLock();
         IsServiceRunning = false;
         base.OnDestroy();
     }
