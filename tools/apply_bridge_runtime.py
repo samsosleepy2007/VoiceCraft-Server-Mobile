@@ -70,6 +70,7 @@ def add_dispatcher(root: Path) -> None:
     write(
         root / "VoiceCraft.Server/RuntimeDispatcher.cs",
         '''using System.Collections.Concurrent;
+using VoiceCraft.Server.Services;
 
 namespace VoiceCraft.Server;
 
