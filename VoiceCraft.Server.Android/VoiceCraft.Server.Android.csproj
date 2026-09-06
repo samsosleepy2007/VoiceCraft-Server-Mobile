@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0-android</TargetFramework>
+    <OutputType>Exe</OutputType>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <MinimumRequiredVersion>23</MinimumRequiredVersion>
+    <SupportedOSPlatformVersion>23</SupportedOSPlatformVersion>
+    <TargetPlatformVersion>36.1</TargetPlatformVersion>
+    <ApplicationId>chat.voicecraft.server</ApplicationId>
+    <ApplicationVersion>1</ApplicationVersion>
+    <ApplicationDisplayVersion>1.7.1-android-phase1</ApplicationDisplayVersion>
+    <AndroidPackageFormat>apk</AndroidPackageFormat>
+    <EmbedAssembliesIntoApk>true</EmbedAssembliesIntoApk>
+    <RunAOTCompilation>false</RunAOTCompilation>
+    <AndroidLinkMode>SdkOnly</AndroidLinkMode>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\VoiceCraft.Upstream\VoiceCraft.Server\VoiceCraft.Server.csproj" />
+  </ItemGroup>
+</Project>

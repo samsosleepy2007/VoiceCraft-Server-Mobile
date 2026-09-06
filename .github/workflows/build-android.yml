@@ -1,0 +1,71 @@
+name: Build Android APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "VoiceCraft.Upstream"
+      - "VoiceCraft.Server.Android/**"
+      - "tools/apply_phase1.py"
+      - ".github/workflows/build-android.yml"
+      - ".gitmodules"
+
+jobs:
+  build-android-arm64:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout repository and VoiceCraft v1.7.1 submodule
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Verify pinned upstream version
+        shell: bash
+        run: |
+          test "$(git -C VoiceCraft.Upstream rev-parse HEAD)" = "85aaccccbb58adb23e8c87144e8b1c24bf4b2011"
+
+      - name: Apply Android headless runtime patch
+        run: python tools/apply_phase1.py VoiceCraft.Upstream
+
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android API 36
+        shell: bash
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0"
+
+      - name: Install .NET Android workload
+        run: dotnet workload install android
+
+      - name: Restore Android project
+        run: dotnet restore VoiceCraft.Server.Android/VoiceCraft.Server.Android.csproj
+
+      - name: Publish Android ARM64 APK
+        run: >-
+          dotnet publish VoiceCraft.Server.Android/VoiceCraft.Server.Android.csproj
+          -c Release
+          -r android-arm64
+          --no-restore
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: VoiceCraft-Server-Android-arm64
+          if-no-files-found: error
+          path: VoiceCraft.Server.Android/bin/Release/net10.0-android/android-arm64/publish/*.apk

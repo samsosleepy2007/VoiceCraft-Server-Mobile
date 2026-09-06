@@ -1,0 +1,3 @@
+[submodule "VoiceCraft.Upstream"]
+	path = VoiceCraft.Upstream
+	url = https://github.com/AvionBlock/VoiceCraft.git
