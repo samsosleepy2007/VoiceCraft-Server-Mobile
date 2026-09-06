@@ -40,7 +40,7 @@ public sealed class VoiceCraftServerService : Service
         }
 
         EnsureNotificationChannel();
-        StartForeground(NotificationId, BuildNotification("Starting VoiceCraft server…"));
+        StartForeground(NotificationId, BuildNotification(IsThai() ? "กำลังเริ่ม VoiceCraft Server…" : "Starting VoiceCraft server…"));
 
         if (_serverTask is { IsCompleted: false })
         {
@@ -103,11 +103,12 @@ public sealed class VoiceCraftServerService : Service
             AndroidRuntimeLog.Append("SECURITY", "Login token loaded (value hidden from log)");
 
             _ = ProbeMcHttpTcpAsync(port);
+            var language = IsThai() ? "th-TH" : "en-US";
 
             var appTask = VcServerApp.Start(new RuntimeOptions
             {
                 Headless = true,
-                Language = "th-TH",
+                Language = language,
                 TransportMode = ["http"],
                 TransportHost = "0.0.0.0",
                 TransportPort = port,
@@ -139,6 +140,8 @@ public sealed class VoiceCraftServerService : Service
         {
             LastError = ex.ToString();
             AndroidRuntimeLog.Append("FATAL", ex.ToString());
+            var advice = RuntimeDiagnostics.Describe(LastError, IsThai());
+            AndroidRuntimeLog.Append("HELP", $"{advice.Title} | Cause: {advice.Cause} | Fix: {advice.Fix}");
         }
         finally
         {
@@ -157,12 +160,6 @@ public sealed class VoiceCraftServerService : Service
         }
     }
 
-    /// <summary>
-    /// Uses a raw TCP socket so Android cleartext HTTP policy cannot create a
-    /// false-negative probe. After the TCP connection succeeds we send a
-    /// minimal HTTP/1.1 GET request. A 403 response is expected and proves
-    /// the McHttp listener is reachable inside the Android process.
-    /// </summary>
     private static async Task ProbeMcHttpTcpAsync(int port)
     {
         await Task.Delay(1200);
@@ -208,11 +205,14 @@ public sealed class VoiceCraftServerService : Service
                 if (_bridgeController is not null)
                     BridgeStatus = _bridgeController.Status;
 
+                var thai = IsThai();
                 var text = LastError != null
-                    ? "Server error — open app for details"
+                    ? thai ? "เซิร์ฟเวอร์เกิดข้อผิดพลาด — เปิดแอปเพื่อดูสาเหตุ" : "Server error — open app for details"
                     : VcServerApp.IsRunning
-                        ? $"UDP/TCP {port} • Clients {VcServerApp.ConnectedClients} • Bridge {BridgeStatus}"
-                        : $"Starting on {port}…";
+                        ? thai
+                            ? $"UDP/TCP {port} • Clients {VcServerApp.ConnectedClients} • Bridge {BridgeStatus}"
+                            : $"UDP/TCP {port} • Clients {VcServerApp.ConnectedClients} • Bridge {BridgeStatus}"
+                        : thai ? $"กำลังเริ่มที่พอร์ต {port}…" : $"Starting on {port}…";
 
                 if (GetSystemService(NotificationService) is NotificationManager manager)
                     manager.Notify(NotificationId, BuildNotification(text));
@@ -222,7 +222,6 @@ public sealed class VoiceCraftServerService : Service
         }
         catch (System.OperationCanceledException)
         {
-            // Normal service shutdown.
         }
     }
 
@@ -241,6 +240,8 @@ public sealed class VoiceCraftServerService : Service
             return "(invalid)";
         return uri.GetLeftPart(UriPartial.Path);
     }
+
+    private bool IsThai() => ServerPreferences.GetLanguage(this) == "th";
 
     private Notification BuildNotification(string text)
     {
@@ -277,7 +278,9 @@ public sealed class VoiceCraftServerService : Service
 #pragma warning disable CA1416
         var channel = new NotificationChannel(ChannelId, "VoiceCraft Server", NotificationImportance.Low)
         {
-            Description = "Keeps the VoiceCraft server running in the background"
+            Description = IsThai()
+                ? "ทำให้ VoiceCraft Server ทำงานเบื้องหลังต่อเนื่อง"
+                : "Keeps the VoiceCraft server running in the background"
         };
         if (GetSystemService(NotificationService) is NotificationManager manager)
             manager.CreateNotificationChannel(channel);
@@ -312,7 +315,6 @@ public sealed class VoiceCraftServerService : Service
         }
         catch
         {
-            // Ignore shutdown cleanup errors.
         }
         finally
         {
