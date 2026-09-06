@@ -1,37 +1,40 @@
 from __future__ import annotations
 
 import hashlib
+import math
 import time
+import uuid
 from typing import Any
 
 from endstone import Player
 from endstone.command import Command, CommandSender
 from endstone.plugin import Plugin
 
+from .bridge import EndstoneRelayClient
 from .listener import VoiceCraftListener
 from .model import PlayerState
 
 
 class VoiceCraftEndstone(Plugin):
     prefix = "VoiceCraftEndstone"
-    version = "0.1.1"
+    version = "0.2.0"
     api_version = "0.11"
-    description = "VoiceCraft Endstone player-state bridge diagnostics"
+    description = "VoiceCraft Endstone player-state and binding bridge"
     authors = ["SamSoSleepy"]
 
     commands = {
         "vcbind": {
-            "description": "Capture a VoiceCraft binding key for the current player",
+            "description": "Bind this Minecraft player to a VoiceCraft client entity",
             "usages": ["/vcbind <key: str>"],
             "permissions": ["voicecraft.command.bind"],
         },
         "vcunbind": {
-            "description": "Clear the pending VoiceCraft binding key",
+            "description": "Clear a pending VoiceCraft bind request",
             "usages": ["/vcunbind"],
             "permissions": ["voicecraft.command.bind"],
         },
         "vcstatus": {
-            "description": "Show VoiceCraft Endstone tracker status",
+            "description": "Show VoiceCraft Endstone bridge status",
             "usages": ["/vcstatus"],
             "permissions": ["voicecraft.command.status"],
         },
@@ -44,11 +47,11 @@ class VoiceCraftEndstone(Plugin):
 
     permissions = {
         "voicecraft.command.bind": {
-            "description": "Allow a player to capture/clear their VoiceCraft binding key.",
+            "description": "Allow a player to bind/unbind VoiceCraft.",
             "default": True,
         },
         "voicecraft.command.status": {
-            "description": "Allow viewing VoiceCraft tracker status.",
+            "description": "Allow viewing VoiceCraft bridge status.",
             "default": True,
         },
         "voicecraft.command.dump": {
@@ -61,6 +64,7 @@ class VoiceCraftEndstone(Plugin):
         super().__init__()
         self._states: dict[str, PlayerState] = {}
         self._pending_bind_keys: dict[str, str] = {}
+        self._pending_bind_requests: dict[str, str] = {}
         self._last_movement_log: dict[str, float] = {}
         self._interval_ticks = 2
         self._position_epsilon = 0.05
@@ -68,6 +72,10 @@ class VoiceCraftEndstone(Plugin):
         self._log_position_changes = False
         self._heartbeat_ticks = 600
         self._heartbeat_accumulator = 0
+        self._bridge_enabled = False
+        self._bridge: EndstoneRelayClient | None = None
+        self._bridge_server_id = "mcsv-main"
+        self._last_peer_state: tuple[bool, bool] | None = None
 
     def on_enable(self) -> None:
         self.save_default_config()
@@ -75,24 +83,34 @@ class VoiceCraftEndstone(Plugin):
         self.register_events(VoiceCraftListener(self))
         self.server.scheduler.run_task(self, self._tracking_tick, delay=0, period=self._interval_ticks)
 
+        bridge_state = "enabled" if self._bridge_enabled else "disabled"
         self.logger.info(
-            "VoiceCraft Endstone Phase 1 enabled: "
-            f"interval={self._interval_ticks} ticks, Endstone API={self.api_version}, network_bridge=disabled"
+            "VoiceCraft Endstone Phase 2 enabled: "
+            f"interval={self._interval_ticks} ticks, Endstone API={self.api_version}, bridge={bridge_state}"
         )
         self.logger.info("Commands ready: /vcbind /vcunbind /vcstatus /vcdump")
 
+        if self._bridge is not None:
+            self._bridge.start()
+            self.logger.info(
+                f"BRIDGE starting outbound WSS client server_id={self._bridge_server_id}; credentials hidden"
+            )
+
         for player in self.server.online_players:
-            self.handle_player_join(player)
+            self._discover_player_if_ready(player, source="enable")
 
     def on_disable(self) -> None:
         try:
             self.server.scheduler.cancel_tasks(self)
         except Exception as exc:
             self.logger.warning(f"Could not cancel scheduler tasks cleanly: {type(exc).__name__}: {exc}")
+        if self._bridge is not None:
+            self._bridge.stop()
         self._states.clear()
         self._pending_bind_keys.clear()
+        self._pending_bind_requests.clear()
         self._last_movement_log.clear()
-        self.logger.info("VoiceCraft Endstone Phase 1 disabled")
+        self.logger.info("VoiceCraft Endstone Phase 2 disabled")
 
     def on_command(self, sender: CommandSender, command: Command, args: list[str]) -> bool:
         if command.name == "vcbind":
@@ -108,6 +126,7 @@ class VoiceCraftEndstone(Plugin):
     def _load_settings(self) -> None:
         tracking = self.config.get("tracking", {})
         binding = self.config.get("binding", {})
+        bridge = self.config.get("bridge", {})
 
         self._interval_ticks = self._bounded_int(tracking.get("interval_ticks", 2), 1, 20, 2)
         self._position_epsilon = self._bounded_float(tracking.get("position_epsilon", 0.05), 0.001, 10.0, 0.05)
@@ -118,6 +137,27 @@ class VoiceCraftEndstone(Plugin):
 
         self._min_key_length = self._bounded_int(binding.get("min_key_length", 4), 1, 1024, 4)
         self._max_key_length = self._bounded_int(binding.get("max_key_length", 128), self._min_key_length, 4096, 128)
+
+        enabled = bool(bridge.get("enabled", False))
+        url = str(bridge.get("url", "")).strip()
+        server_id = str(bridge.get("server_id", "mcsv-main")).strip()
+        secret = str(bridge.get("secret", "")).strip()
+        reconnect_seconds = self._bounded_float(bridge.get("reconnect_seconds", 5), 1.0, 60.0, 5.0)
+
+        placeholders = ("YOUR-RELAY", "CHANGE_ME")
+        usable = enabled and url.startswith(("ws://", "wss://")) and server_id and secret
+        usable = usable and not any(marker in url or marker in secret for marker in placeholders)
+        self._bridge_enabled = usable
+        self._bridge_server_id = server_id or "mcsv-main"
+        self._bridge = (
+            EndstoneRelayClient(self.logger, url, self._bridge_server_id, secret, reconnect_seconds)
+            if usable
+            else None
+        )
+        if enabled and not usable:
+            self.logger.warning(
+                "BRIDGE enabled in config but URL/server_id/secret is incomplete; bridge remains disabled"
+            )
 
     @staticmethod
     def _bounded_int(value: Any, minimum: int, maximum: int, fallback: int) -> int:
@@ -156,15 +196,68 @@ class VoiceCraftEndstone(Plugin):
         )
 
     @staticmethod
+    def _valid_state(state: PlayerState) -> bool:
+        values = (state.x, state.y, state.z, state.yaw, state.pitch)
+        if not all(math.isfinite(value) for value in values):
+            return False
+        # Endstone/BDS exposes a pre-spawn sentinel around Y=32768. Never let
+        # that transitional position reach the VoiceCraft proximity world.
+        if state.y < -4096.0 or state.y > 4096.0:
+            return False
+        if abs(state.x) > 30_000_000 or abs(state.z) > 30_000_000:
+            return False
+        return bool(state.dimension)
+
+    @staticmethod
     def _fingerprint(secret: str) -> str:
         return hashlib.sha256(secret.encode("utf-8")).hexdigest()[:10]
+
+    @staticmethod
+    def _state_message(state: PlayerState) -> dict[str, Any]:
+        return {
+            "type": "player_state",
+            "name": state.name,
+            "xuid": state.xuid,
+            "uuid": state.uuid,
+            "dimension": state.dimension,
+            "x": state.x,
+            "y": state.y,
+            "z": state.z,
+            "yaw": state.yaw,
+            "pitch": state.pitch,
+        }
+
+    def _bridge_send(self, message: dict[str, Any]) -> bool:
+        return self._bridge.send(message) if self._bridge is not None else False
+
+    def _discover_player_if_ready(self, player: Player, source: str) -> PlayerState | None:
+        try:
+            state = self._snapshot(player)
+            if not self._valid_state(state):
+                return None
+            key = self._player_key(player)
+            previous = self._states.get(key)
+            self._states[key] = state
+            if previous is None:
+                self.logger.info(f"TRACK DISCOVER {state.compact()} source={source}")
+            self._bridge_send(self._state_message(state))
+            return state
+        except Exception as exc:
+            self.logger.warning(f"TRACK DISCOVER failed player={getattr(player, 'name', '?')}: {type(exc).__name__}: {exc}")
+            return None
 
     def handle_player_join(self, player: Player) -> None:
         try:
             state = self._snapshot(player)
+            if not self._valid_state(state):
+                self.logger.info(
+                    f"PLAYER JOIN waiting for valid spawn position name={player.name} xuid={player.xuid}"
+                )
+                return
             key = self._player_key(player)
             self._states[key] = state
             self.logger.info(f"PLAYER JOIN {state.compact()}")
+            self._bridge_send(self._state_message(state))
         except Exception as exc:
             self.logger.error(f"PLAYER JOIN snapshot failed for {player.name}: {type(exc).__name__}: {exc}")
 
@@ -172,13 +265,25 @@ class VoiceCraftEndstone(Plugin):
         key = self._player_key(player)
         state = self._states.pop(key, None)
         self._pending_bind_keys.pop(key, None)
+        request_id = self._pending_bind_requests.pop(key, None)
         self._last_movement_log.pop(key, None)
+        payload = {
+            "type": "player_leave",
+            "name": str(player.name),
+            "xuid": str(player.xuid or ""),
+            "uuid": str(player.unique_id),
+        }
+        self._bridge_send(payload)
         if state is not None:
             self.logger.info(f"PLAYER QUIT name={state.name} xuid={state.xuid} uuid={state.uuid}")
         else:
             self.logger.info(f"PLAYER QUIT name={player.name} xuid={player.xuid}")
+        if request_id:
+            self.logger.info(f"BIND pending request cancelled because player left request={request_id[:8]}")
 
     def _tracking_tick(self) -> None:
+        self._drain_bridge_messages()
+        self._log_bridge_peer_change()
         current_keys: set[str] = set()
 
         for player in self.server.online_players:
@@ -186,16 +291,21 @@ class VoiceCraftEndstone(Plugin):
                 key = self._player_key(player)
                 current_keys.add(key)
                 current = self._snapshot(player)
-                previous = self._states.get(key)
+                if not self._valid_state(current):
+                    # Ignore pre-spawn/transitional state (e.g. Y=32768).
+                    continue
 
+                previous = self._states.get(key)
                 if previous is None:
                     self._states[key] = current
-                    self.logger.info(f"TRACK DISCOVER {current.compact()}")
+                    self.logger.info(f"TRACK DISCOVER {current.compact()} source=tick")
+                    self._bridge_send(self._state_message(current))
                     continue
 
                 dimension_changed = current.dimension != previous.dimension
                 position_changed = current.position_changed(previous, self._position_epsilon)
                 rotation_changed = current.rotation_changed(previous, self._rotation_epsilon)
+                name_changed = current.name != previous.name
 
                 if dimension_changed:
                     self.logger.info(
@@ -209,24 +319,101 @@ class VoiceCraftEndstone(Plugin):
                         self._last_movement_log[key] = now
                         self.logger.info(f"MOVE {current.compact()}")
 
-                if dimension_changed or position_changed or rotation_changed or current.name != previous.name:
+                if dimension_changed or position_changed or rotation_changed or name_changed:
                     self._states[key] = current
+                    self._bridge_send(self._state_message(current))
             except Exception as exc:
                 self.logger.warning(f"TRACK ERROR player={getattr(player, 'name', '?')}: {type(exc).__name__}: {exc}")
 
         for stale_key in set(self._states).difference(current_keys):
             stale = self._states.pop(stale_key)
             self._pending_bind_keys.pop(stale_key, None)
+            self._pending_bind_requests.pop(stale_key, None)
             self._last_movement_log.pop(stale_key, None)
+            self._bridge_send(
+                {"type": "player_leave", "name": stale.name, "xuid": stale.xuid, "uuid": stale.uuid}
+            )
             self.logger.info(f"TRACK REMOVE name={stale.name} xuid={stale.xuid}")
 
         self._heartbeat_accumulator += self._interval_ticks
         if self._heartbeat_accumulator >= self._heartbeat_ticks:
             self._heartbeat_accumulator = 0
             pending = sum(1 for key in current_keys if key in self._pending_bind_keys)
+            bridge_status = self._bridge_status_text()
             self.logger.info(
-                f"HEARTBEAT online={len(current_keys)} tracked={len(self._states)} pending_bindings={pending} bridge=phase1-disabled"
+                f"HEARTBEAT online={len(current_keys)} tracked={len(self._states)} "
+                f"pending_bindings={pending} bridge={bridge_status}"
             )
+            self._bridge_send(
+                {
+                    "type": "heartbeat",
+                    "online": len(current_keys),
+                    "tracked": len(self._states),
+                    "pendingBindings": pending,
+                }
+            )
+
+    def _drain_bridge_messages(self) -> None:
+        if self._bridge is None:
+            return
+        for message in self._bridge.drain_incoming():
+            kind = str(message.get("type", ""))
+            if kind == "request_snapshot":
+                self._send_full_snapshot()
+            elif kind == "bind_result":
+                self._handle_bind_result(message)
+
+    def _send_full_snapshot(self) -> None:
+        self._bridge_send({"type": "sync_begin", "count": len(self._states)})
+        for state in self._states.values():
+            self._bridge_send(self._state_message(state))
+        self._bridge_send({"type": "sync_end", "count": len(self._states)})
+        self.logger.info(f"BRIDGE snapshot queued players={len(self._states)}")
+
+    def _handle_bind_result(self, message: dict[str, Any]) -> None:
+        request_id = str(message.get("requestId", ""))
+        xuid = str(message.get("xuid", ""))
+        success = bool(message.get("success", False))
+        reason = str(message.get("reason", ""))[:160]
+
+        player_key = xuid
+        if player_key:
+            self._pending_bind_keys.pop(player_key, None)
+            if self._pending_bind_requests.get(player_key) == request_id:
+                self._pending_bind_requests.pop(player_key, None)
+
+        target = next((p for p in self.server.online_players if str(p.xuid or "") == xuid), None)
+        if target is not None:
+            if success:
+                target.send_message("VoiceCraft: successfully bound to your voice client.")
+            else:
+                target.send_error_message(f"VoiceCraft bind failed: {reason or 'binding key not found'}")
+
+        self.logger.info(
+            f"BIND RESULT player_xuid={xuid or '?'} request={request_id[:8] or '?'} "
+            f"success={success} reason={reason or '-'}"
+        )
+
+    def _log_bridge_peer_change(self) -> None:
+        if self._bridge is None:
+            return
+        state = (self._bridge.connected, self._bridge.android_connected)
+        if state == self._last_peer_state:
+            return
+        self._last_peer_state = state
+        self.logger.info(
+            f"BRIDGE STATUS relay={'connected' if state[0] else 'disconnected'} "
+            f"android={'connected' if state[1] else 'disconnected'}"
+        )
+        if state == (True, True):
+            self._send_full_snapshot()
+
+    def _bridge_status_text(self) -> str:
+        if self._bridge is None:
+            return "disabled"
+        if not self._bridge.connected:
+            return "relay-disconnected"
+        return "android-connected" if self._bridge.android_connected else "relay-only"
 
     def _command_bind(self, sender: CommandSender, args: list[str]) -> bool:
         if not isinstance(sender, Player):
@@ -244,31 +431,57 @@ class VoiceCraftEndstone(Plugin):
             return False
 
         player_key = self._player_key(sender)
+        state = self._states.get(player_key)
+        if state is None:
+            state = self._discover_player_if_ready(sender, source="bind")
+        if state is None:
+            sender.send_error_message("VoiceCraft cannot bind until your spawn position is ready. Try again in a moment.")
+            return False
+
         self._pending_bind_keys[player_key] = key_value
+        request_id = uuid.uuid4().hex
+        self._pending_bind_requests[player_key] = request_id
         fingerprint = self._fingerprint(key_value)
-        self.logger.info(
-            f"BIND CAPTURED player={sender.name} xuid={sender.xuid} key_fingerprint={fingerprint} bridge=phase1-disabled"
+        queued = self._bridge_send(
+            {
+                "type": "bind",
+                "requestId": request_id,
+                "bindingKey": key_value,
+                **{k: v for k, v in self._state_message(state).items() if k != "type"},
+            }
         )
-        sender.send_message("VoiceCraft binding key captured safely in memory.")
-        sender.send_message("Phase 1 tracker is working; network binding will be enabled in Phase 2.")
+
+        self.logger.info(
+            f"BIND CAPTURED player={sender.name} xuid={sender.xuid} key_fingerprint={fingerprint} "
+            f"request={request_id[:8]} bridge={self._bridge_status_text()} queued={queued}"
+        )
+
+        if self._bridge is None:
+            sender.send_message("VoiceCraft binding key captured, but Phase 2 bridge is disabled in config.toml.")
+        elif queued:
+            sender.send_message("VoiceCraft binding request sent to the mobile server bridge.")
+        else:
+            sender.send_error_message("VoiceCraft bridge queue is unavailable; try again shortly.")
         return True
 
     def _command_unbind(self, sender: CommandSender) -> bool:
         if not isinstance(sender, Player):
             sender.send_error_message("/vcunbind must be run by a player.")
             return False
-        removed = self._pending_bind_keys.pop(self._player_key(sender), None)
+        player_key = self._player_key(sender)
+        removed = self._pending_bind_keys.pop(player_key, None)
+        self._pending_bind_requests.pop(player_key, None)
         if removed is None:
-            sender.send_message("No pending VoiceCraft binding key was stored.")
+            sender.send_message("No pending VoiceCraft binding request was stored.")
         else:
             self.logger.info(f"BIND CLEARED player={sender.name} xuid={sender.xuid}")
-            sender.send_message("Pending VoiceCraft binding key cleared.")
+            sender.send_message("Pending VoiceCraft binding request cleared.")
         return True
 
     def _command_status(self, sender: CommandSender) -> bool:
         online = len(self.server.online_players)
         sender.send_message(
-            f"VoiceCraft Endstone v{self.version}: Phase 1 tracker active, bridge disabled, "
+            f"VoiceCraft Endstone v{self.version}: Phase 2 tracker active, bridge={self._bridge_status_text()}, "
             f"online={online}, tracked={len(self._states)}, interval={self._interval_ticks} ticks"
         )
         if isinstance(sender, Player):
@@ -276,7 +489,8 @@ class VoiceCraftEndstone(Plugin):
             state = self._states.get(key)
             if state is None:
                 try:
-                    state = self._snapshot(sender)
+                    candidate = self._snapshot(sender)
+                    state = candidate if self._valid_state(candidate) else None
                 except Exception:
                     state = None
             if state is not None:
@@ -289,7 +503,7 @@ class VoiceCraftEndstone(Plugin):
 
     def _command_dump(self, sender: CommandSender) -> bool:
         if not self._states:
-            sender.send_message("VoiceCraft tracker has no player states.")
+            sender.send_message("VoiceCraft tracker has no valid player states.")
             return True
         sender.send_message(f"VoiceCraft tracked states ({len(self._states)}):")
         for state in sorted(self._states.values(), key=lambda item: item.name.lower()):

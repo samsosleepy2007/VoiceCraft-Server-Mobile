@@ -1,0 +1,110 @@
+name: Check Bridge Relay
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, endstone-phase2]
+    paths:
+      - "VoiceCraft.Bridge.Relay/**"
+      - "render.yaml"
+      - ".github/workflows/check-relay.yml"
+
+jobs:
+  check-relay:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install dependencies
+        working-directory: VoiceCraft.Bridge.Relay
+        run: npm install
+
+      - name: Syntax check
+        working-directory: VoiceCraft.Bridge.Relay
+        run: npm run check
+
+      - name: Health and websocket smoke test
+        working-directory: VoiceCraft.Bridge.Relay
+        shell: bash
+        env:
+          BRIDGE_SECRET: ci-test-secret-0123456789abcdef
+          PORT: "18080"
+        run: |
+          set -euo pipefail
+          node index.js > /tmp/relay.log 2>&1 &
+          relay_pid=$!
+          trap 'kill $relay_pid 2>/dev/null || true; cat /tmp/relay.log' EXIT
+
+          for i in $(seq 1 20); do
+            if curl -fsS http://127.0.0.1:18080/health >/tmp/health.json; then
+              break
+            fi
+            sleep 0.25
+          done
+          grep -q '"ok":true' /tmp/health.json
+
+          node --input-type=module <<'NODE'
+          import WebSocket from "ws";
+
+          const secret = "ci-test-secret-0123456789abcdef";
+          const serverId = "ci-room";
+
+          function open(role) {
+            return new Promise((resolve, reject) => {
+              const ws = new WebSocket("ws://127.0.0.1:18080/bridge");
+              const timer = setTimeout(() => reject(new Error(`${role} timeout`)), 5000);
+              ws.on("open", () => {
+                ws.send(JSON.stringify({ type: "hello", role, serverId, secret }));
+              });
+              ws.on("message", (raw) => {
+                const msg = JSON.parse(raw.toString());
+                if (msg.type === "hello_ok") {
+                  clearTimeout(timer);
+                  resolve(ws);
+                }
+              });
+              ws.on("error", reject);
+            });
+          }
+
+          const endstone = await open("endstone");
+          const android = await open("android");
+
+          const received = new Promise((resolve, reject) => {
+            const timer = setTimeout(() => reject(new Error("player_state was not forwarded")), 5000);
+            android.on("message", (raw) => {
+              const msg = JSON.parse(raw.toString());
+              if (msg.type === "player_state" && msg.xuid === "123") {
+                clearTimeout(timer);
+                resolve(msg);
+              }
+            });
+          });
+
+          endstone.send(JSON.stringify({
+            type: "player_state",
+            serverId,
+            name: "CI",
+            xuid: "123",
+            uuid: "ci",
+            dimension: "Overworld",
+            x: 1,
+            y: 64,
+            z: 2,
+            yaw: 3,
+            pitch: 4
+          }));
+
+          await received;
+          endstone.close();
+          android.close();
+          console.log("Relay websocket forwarding OK");
+          NODE
