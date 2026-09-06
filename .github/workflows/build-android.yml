@@ -9,6 +9,7 @@ on:
       - "VoiceCraft.Server.Android/**"
       - "tools/apply_phase1.py"
       - "tools/apply_android_console_fix.py"
+      - "tools/apply_mchttp_diagnostics.py"
       - ".github/workflows/build-android.yml"
       - ".gitmodules"
 
@@ -33,6 +34,9 @@ jobs:
 
       - name: Disable Spectre.Console for Android headless mode
         run: python tools/apply_android_console_fix.py VoiceCraft.Upstream
+
+      - name: Add McHttp diagnostics hook
+        run: python tools/apply_mchttp_diagnostics.py VoiceCraft.Upstream
 
       - name: Setup .NET 10
         uses: actions/setup-dotnet@v4
