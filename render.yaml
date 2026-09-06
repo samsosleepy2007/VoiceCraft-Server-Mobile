@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: voicecraft-endstone-relay
+    runtime: node
+    rootDir: VoiceCraft.Bridge.Relay
+    buildCommand: npm install --omit=dev
+    startCommand: npm start
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: BRIDGE_SECRET
+        sync: false
