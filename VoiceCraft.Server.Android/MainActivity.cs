@@ -173,7 +173,7 @@ public sealed class MainActivity : Activity
         var key = ServerPreferences.GetServerKey(this);
         var text = $"VoiceCraft: {ip}:{port}\nMcHttp: http://{ip}:{port}\nKey: {key}";
 
-        if (GetSystemService(ClipboardService) is ClipboardManager clipboard)
+        if (GetSystemService(ClipboardService) is Android.Content.ClipboardManager clipboard)
         {
             clipboard.PrimaryClip = ClipData.NewPlainText("VoiceCraft connection", text);
             Toast.MakeText(this, "Copied", ToastLength.Short)?.Show();
