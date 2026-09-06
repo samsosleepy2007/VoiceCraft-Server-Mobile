@@ -34,15 +34,13 @@ def patch_app(root: Path) -> None:
     public static IServiceProvider? ActiveServiceProvider { get; private set; }''',
     )
 
+    # The console-headless patch intentionally inserts several lines immediately
+    # after ownsServiceProvider, so anchor only on the stable assignment itself.
     replace_once(
         path,
+        '''        var ownsServiceProvider = runtimeOptions.Headless;''',
         '''        var ownsServiceProvider = runtimeOptions.Headless;
-
-        var languageOverriden = !string.IsNullOrWhiteSpace(runtimeOptions.Language);''',
-        '''        var ownsServiceProvider = runtimeOptions.Headless;
-        ActiveServiceProvider = serviceProvider;
-
-        var languageOverriden = !string.IsNullOrWhiteSpace(runtimeOptions.Language);''',
+        ActiveServiceProvider = serviceProvider;''',
     )
 
     replace_once(
