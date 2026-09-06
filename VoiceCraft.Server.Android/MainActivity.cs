@@ -103,9 +103,9 @@ public sealed class MainActivity : Activity
         _logView = new TextView(this)
         {
             TextSize = 11,
-            Typeface = Typeface.Monospace,
-            MinHeight = Dp(240)
+            Typeface = Typeface.Monospace
         };
+        _logView.SetMinHeight(Dp(240));
         _logView.SetTextIsSelectable(true);
         _logView.SetPadding(Dp(10), Dp(10), Dp(10), Dp(10));
         root.AddView(_logView);
