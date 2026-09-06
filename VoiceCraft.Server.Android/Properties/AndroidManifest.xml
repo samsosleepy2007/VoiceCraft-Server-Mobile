@@ -7,7 +7,11 @@
   <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
   <uses-permission android:name="android.permission.WAKE_LOCK" />
 
-  <application android:label="VoiceCraft Server" android:allowBackup="false" android:supportsRtl="true">
+  <application
+    android:label="VoiceCraft Server"
+    android:allowBackup="false"
+    android:supportsRtl="true"
+    android:usesCleartextTraffic="true">
     <service
       android:name="chat.voicecraft.server.VoiceCraftServerService"
       android:exported="false"
