@@ -51,7 +51,15 @@ public static class AndroidRuntimeLog
         string raw;
         lock (Sync)
             raw = string.Join("\n", Lines);
-        return RuntimeDiagnostics.TranslateSnapshot(raw, thai);
+
+        var output = RuntimeDiagnostics.TranslateSnapshot(raw, thai);
+        if (!thai)
+            return output;
+
+        return output
+            .Replace(" HELP: ", " คำแนะนำ: ", StringComparison.OrdinalIgnoreCase)
+            .Replace(" | Cause: ", " | สาเหตุ: ", StringComparison.OrdinalIgnoreCase)
+            .Replace(" | Fix: ", " | วิธีแก้: ", StringComparison.OrdinalIgnoreCase);
     }
 
     public static void Clear()
