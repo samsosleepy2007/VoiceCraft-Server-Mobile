@@ -21,9 +21,11 @@ public sealed class VoiceCraftServerService : Service
     private CancellationTokenSource? _notificationCts;
     private PowerManager.WakeLock? _wakeLock;
     private Task? _serverTask;
+    private EndstoneBridgeController? _bridgeController;
 
     public static bool IsServiceRunning { get; private set; }
     public static string? LastError { get; private set; }
+    public static string BridgeStatus { get; private set; } = "disabled";
 
     public override IBinder? OnBind(Intent? intent) => null;
 
@@ -54,23 +56,40 @@ public sealed class VoiceCraftServerService : Service
         if (string.IsNullOrWhiteSpace(key))
             key = ServerPreferences.GetServerKey(this);
 
+        var bridgeEnabled = ServerPreferences.GetBridgeEnabled(this);
+        var bridgeUrl = ServerPreferences.GetBridgeUrl(this);
+        var bridgeServerId = ServerPreferences.GetBridgeServerId(this);
+        var bridgeSecret = ServerPreferences.GetBridgeSecret(this);
+
         ServerPreferences.Save(this, port, key);
         IsServiceRunning = true;
         LastError = null;
+        BridgeStatus = bridgeEnabled ? "starting" : "disabled";
         AndroidRuntimeLog.Append("SERVICE", $"Starting foreground server on port {port}");
         AndroidRuntimeLog.Append("SERVICE", $"App data: {FilesDir?.AbsolutePath ?? "(unknown)"}");
+        AndroidRuntimeLog.Append(
+            "BRIDGE",
+            bridgeEnabled
+                ? $"Configured outbound relay={SafeBridgeUrl(bridgeUrl)} server_id={bridgeServerId}; secret hidden"
+                : "Phase 2 bridge disabled in app settings");
         AcquireWakeLock();
 
         _notificationCts?.Cancel();
         _notificationCts?.Dispose();
         _notificationCts = new CancellationTokenSource();
         _ = NotificationLoopAsync(port, _notificationCts.Token);
-        _serverTask = Task.Run(() => RunServerAsync(port, key));
+        _serverTask = Task.Run(() => RunServerAsync(port, key, bridgeEnabled, bridgeUrl, bridgeServerId, bridgeSecret));
 
         return StartCommandResult.Sticky;
     }
 
-    private async Task RunServerAsync(int port, string key)
+    private async Task RunServerAsync(
+        int port,
+        string key,
+        bool bridgeEnabled,
+        string bridgeUrl,
+        string bridgeServerId,
+        string bridgeSecret)
     {
         try
         {
@@ -85,7 +104,7 @@ public sealed class VoiceCraftServerService : Service
 
             _ = ProbeMcHttpTcpAsync(port);
 
-            await VcServerApp.Start(new RuntimeOptions
+            var appTask = VcServerApp.Start(new RuntimeOptions
             {
                 Headless = true,
                 Language = "th-TH",
@@ -96,6 +115,24 @@ public sealed class VoiceCraftServerService : Service
                 ServerKey = key
             });
 
+            if (bridgeEnabled)
+            {
+                if (IsValidBridgeConfig(bridgeUrl, bridgeServerId, bridgeSecret))
+                {
+                    _bridgeController = new EndstoneBridgeController(bridgeUrl, bridgeServerId, bridgeSecret);
+                    _bridgeController.Start();
+                    BridgeStatus = "starting";
+                }
+                else
+                {
+                    BridgeStatus = "invalid-config";
+                    AndroidRuntimeLog.Append(
+                        "BRIDGE",
+                        "Bridge was enabled but URL/server id/secret is invalid. Server continues without Phase 2 bridge.");
+                }
+            }
+
+            await appTask;
             AndroidRuntimeLog.Append("RUNTIME", "VoiceCraft server loop ended normally");
         }
         catch (Exception ex)
@@ -105,6 +142,12 @@ public sealed class VoiceCraftServerService : Service
         }
         finally
         {
+            if (_bridgeController is not null)
+            {
+                await _bridgeController.DisposeAsync();
+                _bridgeController = null;
+            }
+            BridgeStatus = "disabled";
             ServerConsole.Sink = null;
             HttpMcApiServer.DiagnosticLog = null;
             IsServiceRunning = false;
@@ -162,10 +205,13 @@ public sealed class VoiceCraftServerService : Service
         {
             while (!token.IsCancellationRequested)
             {
+                if (_bridgeController is not null)
+                    BridgeStatus = _bridgeController.Status;
+
                 var text = LastError != null
                     ? "Server error — open app for details"
                     : VcServerApp.IsRunning
-                        ? $"UDP/TCP {port} • Clients {VcServerApp.ConnectedClients}"
+                        ? $"UDP/TCP {port} • Clients {VcServerApp.ConnectedClients} • Bridge {BridgeStatus}"
                         : $"Starting on {port}…";
 
                 if (GetSystemService(NotificationService) is NotificationManager manager)
@@ -178,6 +224,22 @@ public sealed class VoiceCraftServerService : Service
         {
             // Normal service shutdown.
         }
+    }
+
+    private static bool IsValidBridgeConfig(string url, string serverId, string secret)
+    {
+        if (string.IsNullOrWhiteSpace(serverId) || string.IsNullOrWhiteSpace(secret) || secret.Length < 16)
+            return false;
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri))
+            return false;
+        return uri.Scheme is "ws" or "wss" && !url.Contains("YOUR-RELAY", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string SafeBridgeUrl(string url)
+    {
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri))
+            return "(invalid)";
+        return uri.GetLeftPart(UriPartial.Path);
     }
 
     private Notification BuildNotification(string text)
