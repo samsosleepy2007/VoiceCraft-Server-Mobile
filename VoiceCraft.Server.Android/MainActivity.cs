@@ -47,7 +47,7 @@ public sealed class MainActivity : Activity
     private Button? _start;
     private Button? _stop;
 
-    private Android.Widget.Switch? _bridgeEnabled;
+    private global::Android.Widget.Switch? _bridgeEnabled;
     private EditText? _renderUrl;
     private TextView? _webSocketUrl;
     private EditText? _serverId;
@@ -148,7 +148,7 @@ public sealed class MainActivity : Activity
 
     private void AddNav(LinearLayout nav, string name, int index)
     {
-        var button = Button(name);
+        var button = MakeButton(name);
         button.Click += (_, _) => ShowPage(index);
         nav.AddView(button, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MatchParent, 1f)
         {
@@ -204,8 +204,8 @@ public sealed class MainActivity : Activity
         var control = Card();
         control.AddView(CardTitle("Server Control"));
         var controls = ButtonRow();
-        _start = Button("START SERVER", true);
-        _stop = Button("STOP SERVER", false, true);
+        _start = MakeButton("START SERVER", true);
+        _stop = MakeButton("STOP SERVER", false, true);
         _start.Click += (_, _) => StartServer();
         _stop.Click += (_, _) => StopServer();
         controls.AddView(_start, Weight(Dp(48)));
@@ -221,7 +221,7 @@ public sealed class MainActivity : Activity
 
         var setup = Card();
         setup.AddView(CardTitle("Render Relay"));
-        _bridgeEnabled = new Android.Widget.Switch(this)
+        _bridgeEnabled = new global::Android.Widget.Switch(this)
         {
             Text = "Enable Endstone bridge",
             Checked = ServerPreferences.GetBridgeEnabled(this)
@@ -349,7 +349,7 @@ public sealed class MainActivity : Activity
         var save = Card(LightBlue, Border);
         save.AddView(CardTitle("Save Configuration"));
         save.AddView(Label("Settings are also saved when the server starts or this app leaves the foreground.", 12, Muted));
-        var saveButton = Button("SAVE SETTINGS", true);
+        var saveButton = MakeButton("SAVE SETTINGS", true);
         saveButton.Click += (_, _) => SavePreferences(true);
         save.AddView(saveButton, Top(Dp(12)));
         body.AddView(save, CardLayout());
@@ -445,7 +445,7 @@ public sealed class MainActivity : Activity
         return field;
     }
 
-    private Button Button(string text, bool primary = false, bool danger = false)
+    private Button MakeButton(string text, bool primary = false, bool danger = false)
     {
         var fill = primary ? Blue : danger ? Color.Rgb(254, 242, 242) : Color.White;
         var stroke = primary ? Blue : danger ? Red : Border;
@@ -465,7 +465,7 @@ public sealed class MainActivity : Activity
 
     private void AddButton(LinearLayout row, string text, EventHandler click, bool primary = false)
     {
-        var button = Button(text, primary);
+        var button = MakeButton(text, primary);
         button.Click += click;
         row.AddView(button, new LinearLayout.LayoutParams(0, Dp(46), 1f)
         {
@@ -626,7 +626,8 @@ public sealed class MainActivity : Activity
         if (string.IsNullOrWhiteSpace(key))
         {
             key = Guid.NewGuid().ToString("N");
-            if (_serverKey != null) _serverKey.Text = key;
+            if (_serverKey != null)
+                _serverKey.Text = key;
         }
 
         var bridgeEnabled = _bridgeEnabled?.Checked == true;
@@ -668,7 +669,8 @@ public sealed class MainActivity : Activity
         if (string.IsNullOrWhiteSpace(key))
         {
             key = Guid.NewGuid().ToString("N");
-            if (_serverKey != null) _serverKey.Text = key;
+            if (_serverKey != null)
+                _serverKey.Text = key;
         }
         ServerPreferences.Save(this, port, key);
         ServerPreferences.SaveBridge(this, _bridgeEnabled?.Checked == true, CurrentWebSocket(), CurrentServerId(), CurrentSecret());
@@ -719,12 +721,18 @@ public sealed class MainActivity : Activity
             }
         }
 
-        if (_address != null) _address.Text = $"{ip}:{port}";
-        if (_clientCount != null) _clientCount.Text = VcServerApp.ConnectedClients.ToString();
-        if (_bridgeState != null) _bridgeState.Text = ShortBridge(VoiceCraftServerService.BridgeStatus);
-        if (_relaySummary != null) _relaySummary.Text = string.IsNullOrEmpty(CurrentWebSocket()) ? "Relay not configured" : CurrentWebSocket();
-        if (_start != null) _start.Enabled = !running && !service;
-        if (_stop != null) _stop.Enabled = running || service;
+        if (_address != null)
+            _address.Text = $"{ip}:{port}";
+        if (_clientCount != null)
+            _clientCount.Text = VcServerApp.ConnectedClients.ToString();
+        if (_bridgeState != null)
+            _bridgeState.Text = ShortBridge(VoiceCraftServerService.BridgeStatus);
+        if (_relaySummary != null)
+            _relaySummary.Text = string.IsNullOrEmpty(CurrentWebSocket()) ? "Relay not configured" : CurrentWebSocket();
+        if (_start != null)
+            _start.Enabled = !running && !service;
+        if (_stop != null)
+            _stop.Enabled = running || service;
         RefreshBridgePreview();
         RefreshLog();
     }
@@ -741,9 +749,11 @@ public sealed class MainActivity : Activity
 
     private void RefreshLog(bool force = false)
     {
-        if (_logView == null) return;
+        if (_logView == null)
+            return;
         var version = AndroidRuntimeLog.Version;
-        if (!force && version == _renderedLogVersion) return;
+        if (!force && version == _renderedLogVersion)
+            return;
         _renderedLogVersion = version;
         var text = AndroidRuntimeLog.Snapshot();
         _logView.Text = string.IsNullOrWhiteSpace(text) ? "(no log entries yet)" : text;
@@ -776,7 +786,8 @@ public sealed class MainActivity : Activity
     private void CopyServerKey()
     {
         var key = _serverKey?.Text?.Trim() ?? string.Empty;
-        if (key.Length == 0) return;
+        if (key.Length == 0)
+            return;
         Copy("VoiceCraft Server Key", key, true);
     }
 
@@ -818,7 +829,8 @@ public sealed class MainActivity : Activity
 
     private void Copy(string label, string value, bool secret = false)
     {
-        if (GetSystemService(ClipboardService) is not global::Android.Content.ClipboardManager clipboard) return;
+        if (GetSystemService(ClipboardService) is not global::Android.Content.ClipboardManager clipboard)
+            return;
         clipboard.PrimaryClip = ClipData.NewPlainText(label, value);
         Toast.MakeText(this, secret ? "Copied — clipboard contains a secret" : "Copied", secret ? ToastLength.Long : ToastLength.Short)?.Show();
     }
@@ -845,7 +857,8 @@ public sealed class MainActivity : Activity
 
     private void ToggleBridgeSecret()
     {
-        if (_bridgeSecret == null) return;
+        if (_bridgeSecret == null)
+            return;
         _bridgeSecretVisible = !_bridgeSecretVisible;
         _bridgeSecret.InputType = _bridgeSecretVisible
             ? InputTypes.ClassText | InputTypes.TextVariationVisiblePassword
@@ -855,7 +868,8 @@ public sealed class MainActivity : Activity
 
     private void ToggleServerKey()
     {
-        if (_serverKey == null) return;
+        if (_serverKey == null)
+            return;
         _serverKeyVisible = !_serverKeyVisible;
         _serverKey.InputType = _serverKeyVisible
             ? InputTypes.ClassText | InputTypes.TextVariationVisiblePassword
@@ -920,7 +934,8 @@ public sealed class MainActivity : Activity
 
     private void RequestNotificationPermission()
     {
-        if (Build.VERSION.SdkInt < BuildVersionCodes.Tiramisu) return;
+        if (Build.VERSION.SdkInt < BuildVersionCodes.Tiramisu)
+            return;
 #pragma warning disable CA1416
         if (CheckSelfPermission(Manifest.Permission.PostNotifications) != Permission.Granted)
             RequestPermissions([Manifest.Permission.PostNotifications], 1701);
