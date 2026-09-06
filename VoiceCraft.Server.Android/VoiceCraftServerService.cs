@@ -26,6 +26,7 @@ public sealed class VoiceCraftServerService : Service
     public static bool IsServiceRunning { get; private set; }
     public static string? LastError { get; private set; }
     public static string BridgeStatus { get; private set; } = "disabled";
+    public static string BridgeLastError { get; private set; } = string.Empty;
 
     public override IBinder? OnBind(Intent? intent) => null;
 
@@ -64,6 +65,7 @@ public sealed class VoiceCraftServerService : Service
         ServerPreferences.Save(this, port, key);
         IsServiceRunning = true;
         LastError = null;
+        BridgeLastError = string.Empty;
         BridgeStatus = bridgeEnabled ? "starting" : "disabled";
         AndroidRuntimeLog.Append("SERVICE", $"Starting foreground server on port {port}");
         AndroidRuntimeLog.Append("SERVICE", $"App data: {FilesDir?.AbsolutePath ?? "(unknown)"}");
@@ -151,6 +153,7 @@ public sealed class VoiceCraftServerService : Service
                 _bridgeController = null;
             }
             BridgeStatus = "disabled";
+            BridgeLastError = string.Empty;
             ServerConsole.Sink = null;
             HttpMcApiServer.DiagnosticLog = null;
             IsServiceRunning = false;
@@ -203,15 +206,16 @@ public sealed class VoiceCraftServerService : Service
             while (!token.IsCancellationRequested)
             {
                 if (_bridgeController is not null)
+                {
                     BridgeStatus = _bridgeController.Status;
+                    BridgeLastError = _bridgeController.LastError;
+                }
 
                 var thai = IsThai();
                 var text = LastError != null
                     ? thai ? "เซิร์ฟเวอร์เกิดข้อผิดพลาด — เปิดแอปเพื่อดูสาเหตุ" : "Server error — open app for details"
                     : VcServerApp.IsRunning
-                        ? thai
-                            ? $"UDP/TCP {port} • Clients {VcServerApp.ConnectedClients} • Bridge {BridgeStatus}"
-                            : $"UDP/TCP {port} • Clients {VcServerApp.ConnectedClients} • Bridge {BridgeStatus}"
+                        ? $"UDP/TCP {port} • Clients {VcServerApp.ConnectedClients} • Bridge {BridgeStatus}"
                         : thai ? $"กำลังเริ่มที่พอร์ต {port}…" : $"Starting on {port}…";
 
                 if (GetSystemService(NotificationService) is NotificationManager manager)
@@ -332,6 +336,7 @@ public sealed class VoiceCraftServerService : Service
         VcServerApp.Shutdown();
         ReleaseWakeLock();
         IsServiceRunning = false;
+        BridgeLastError = string.Empty;
         base.OnDestroy();
     }
 }
