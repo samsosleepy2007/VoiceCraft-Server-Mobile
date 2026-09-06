@@ -26,6 +26,10 @@ public sealed class MainActivity : Activity
     private TextView? _logView;
     private EditText? _port;
     private EditText? _serverKey;
+    private CheckBox? _bridgeEnabled;
+    private EditText? _bridgeUrl;
+    private EditText? _bridgeServerId;
+    private EditText? _bridgeSecret;
     private Handler? _handler;
     private IRunnable? _refreshRunnable;
     private long _renderedLogVersion = -1;
@@ -51,7 +55,7 @@ public sealed class MainActivity : Activity
 
         root.AddView(new TextView(this)
         {
-            Text = "VoiceCraft Server • Android Diagnostics",
+            Text = "VoiceCraft Server • Android Phase 2",
             TextSize = 22
         });
 
@@ -71,7 +75,7 @@ public sealed class MainActivity : Activity
         };
         root.AddView(_port);
 
-        root.AddView(new TextView(this) { Text = "Server key", TextSize = 14 });
+        root.AddView(new TextView(this) { Text = "Server key (legacy McHttp token)", TextSize = 14 });
         _serverKey = new EditText(this)
         {
             InputType = InputTypes.ClassText,
@@ -79,6 +83,52 @@ public sealed class MainActivity : Activity
         };
         _serverKey.SetSingleLine(true);
         root.AddView(_serverKey);
+
+        var bridgeHeader = new TextView(this)
+        {
+            Text = "Endstone Phase 2 Bridge (Render WSS)",
+            TextSize = 16
+        };
+        bridgeHeader.SetPadding(0, Dp(18), 0, Dp(6));
+        root.AddView(bridgeHeader);
+
+        _bridgeEnabled = new CheckBox(this)
+        {
+            Text = "Enable Endstone bridge",
+            Checked = ServerPreferences.GetBridgeEnabled(this)
+        };
+        root.AddView(_bridgeEnabled);
+
+        root.AddView(new TextView(this) { Text = "Relay WebSocket URL", TextSize = 14 });
+        _bridgeUrl = new EditText(this)
+        {
+            InputType = InputTypes.ClassText | InputTypes.TextVariationUri,
+            Text = ServerPreferences.GetBridgeUrl(this)
+        };
+        _bridgeUrl.SetSingleLine(true);
+        root.AddView(_bridgeUrl);
+
+        root.AddView(new TextView(this) { Text = "Bridge server ID", TextSize = 14 });
+        _bridgeServerId = new EditText(this)
+        {
+            InputType = InputTypes.ClassText,
+            Text = ServerPreferences.GetBridgeServerId(this)
+        };
+        _bridgeServerId.SetSingleLine(true);
+        root.AddView(_bridgeServerId);
+
+        root.AddView(new TextView(this) { Text = "Bridge secret (same value on Render + Endstone)", TextSize = 14 });
+        _bridgeSecret = new EditText(this)
+        {
+            InputType = InputTypes.ClassText | InputTypes.TextVariationPassword,
+            Text = ServerPreferences.GetBridgeSecret(this)
+        };
+        _bridgeSecret.SetSingleLine(true);
+        root.AddView(_bridgeSecret);
+
+        var copyBridge = new Button(this) { Text = "COPY BRIDGE SETUP" };
+        copyBridge.Click += (_, _) => CopyBridgeSetup();
+        root.AddView(copyBridge);
 
         var start = new Button(this) { Text = "START SERVER" };
         start.Click += (_, _) => StartServer();
@@ -94,7 +144,7 @@ public sealed class MainActivity : Activity
 
         var logHeader = new TextView(this)
         {
-            Text = "Runtime / McHttp Log",
+            Text = "Runtime / McHttp / Endstone Bridge Log",
             TextSize = 16
         };
         logHeader.SetPadding(0, Dp(18), 0, Dp(6));
@@ -105,7 +155,7 @@ public sealed class MainActivity : Activity
             TextSize = 11,
             Typeface = Typeface.Monospace
         };
-        _logView.SetMinHeight(Dp(240));
+        _logView.SetMinHeight(Dp(260));
         _logView.SetTextIsSelectable(true);
         _logView.SetPadding(Dp(10), Dp(10), Dp(10), Dp(10));
         root.AddView(_logView);
@@ -125,7 +175,7 @@ public sealed class MainActivity : Activity
 
         var note = new TextView(this)
         {
-            Text = "Diagnostics never intentionally print the McHttp login token. For LAN hosting, set battery usage to Unrestricted.",
+            Text = "Bridge credentials and binding keys are intentionally hidden from runtime logs. COPY BRIDGE SETUP copies the secret only when you explicitly press it. Render WSS handles Minecraft state/binding; VoiceCraft audio still uses UDP.",
             TextSize = 13
         };
         note.SetPadding(0, Dp(16), 0, 0);
@@ -152,8 +202,20 @@ public sealed class MainActivity : Activity
                 _serverKey.Text = key;
         }
 
-        AndroidRuntimeLog.Append("UI", $"START SERVER pressed; port={port}");
+        var bridgeEnabled = _bridgeEnabled?.Checked == true;
+        var bridgeUrl = _bridgeUrl?.Text?.Trim() ?? string.Empty;
+        var bridgeServerId = _bridgeServerId?.Text?.Trim() ?? string.Empty;
+        var bridgeSecret = _bridgeSecret?.Text?.Trim() ?? string.Empty;
+
+        if (bridgeEnabled && !ValidateBridge(bridgeUrl, bridgeServerId, bridgeSecret, out var bridgeError))
+        {
+            Toast.MakeText(this, bridgeError, ToastLength.Long)?.Show();
+            return;
+        }
+
+        AndroidRuntimeLog.Append("UI", $"START SERVER pressed; port={port}; bridge={(bridgeEnabled ? "enabled" : "disabled")}");
         ServerPreferences.Save(this, port, key);
+        ServerPreferences.SaveBridge(this, bridgeEnabled, bridgeUrl, bridgeServerId, bridgeSecret);
         var intent = new Intent(this, typeof(VoiceCraftServerService));
         intent.PutExtra(ServerPreferences.ExtraVoicePort, port);
         intent.PutExtra(ServerPreferences.ExtraServerKey, key);
@@ -181,16 +243,18 @@ public sealed class MainActivity : Activity
     {
         var ip = GetLanIpv4() ?? "(no LAN IPv4 detected)";
         var port = ServerPreferences.GetVoicePort(this);
-        var key = ServerPreferences.GetServerKey(this);
         var running = VcServerApp.IsRunning;
         var service = VoiceCraftServerService.IsServiceRunning;
+        var bridgeEnabled = ServerPreferences.GetBridgeEnabled(this);
+        var bridgeUrl = ServerPreferences.GetBridgeUrl(this);
+        var bridgeServerId = ServerPreferences.GetBridgeServerId(this);
 
         if (_status != null)
         {
             _status.Text = VoiceCraftServerService.LastError != null
                 ? $"Status: ERROR\n{VoiceCraftServerService.LastError}"
                 : running
-                    ? $"Status: RUNNING • Voice clients {VcServerApp.ConnectedClients}"
+                    ? $"Status: RUNNING • Voice clients {VcServerApp.ConnectedClients}\nEndstone bridge: {VoiceCraftServerService.BridgeStatus}"
                     : service ? "Status: STARTING…" : "Status: STOPPED";
         }
 
@@ -198,10 +262,11 @@ public sealed class MainActivity : Activity
         {
             _connectionInfo.Text =
                 $"LAN IP: {ip}\n" +
-                $"Voice client: {ip}:{port} (UDP)\n" +
-                $"McHttp: http://{ip}:{port} (TCP)\n" +
-                $"Server key: {key}\n\n" +
-                $"Bedrock Dedicated Server command:\n/voicecraft:vcconnect \"http://{ip}:{port}\" \"{key}\"\n";
+                $"Voice client: {ip}:{port} (UDP / LAN)\n" +
+                $"McHttp legacy test: http://{ip}:{port} (TCP)\n" +
+                $"Endstone bridge: {(bridgeEnabled ? "enabled" : "disabled")}\n" +
+                $"Relay: {SafeBridgeUrl(bridgeUrl)}\n" +
+                $"Server ID: {bridgeServerId}\n";
         }
 
         RefreshLog();
@@ -225,13 +290,36 @@ public sealed class MainActivity : Activity
     {
         var ip = GetLanIpv4() ?? "0.0.0.0";
         var port = ServerPreferences.GetVoicePort(this);
-        var key = ServerPreferences.GetServerKey(this);
-        var text = $"VoiceCraft: {ip}:{port}\nMcHttp: http://{ip}:{port}\nKey: {key}";
+        var bridgeUrl = ServerPreferences.GetBridgeUrl(this);
+        var bridgeServerId = ServerPreferences.GetBridgeServerId(this);
+        var text =
+            $"VoiceCraft LAN UDP: {ip}:{port}\n" +
+            $"Endstone relay: {SafeBridgeUrl(bridgeUrl)}\n" +
+            $"Bridge server ID: {bridgeServerId}\n" +
+            $"Bridge status: {VoiceCraftServerService.BridgeStatus}";
 
         if (GetSystemService(ClipboardService) is global::Android.Content.ClipboardManager clipboard)
         {
             clipboard.PrimaryClip = ClipData.NewPlainText("VoiceCraft connection", text);
-            Toast.MakeText(this, "Connection info copied", ToastLength.Short)?.Show();
+            Toast.MakeText(this, "Connection info copied (secret excluded)", ToastLength.Short)?.Show();
+        }
+    }
+
+    private void CopyBridgeSetup()
+    {
+        var enabled = _bridgeEnabled?.Checked == true;
+        var url = _bridgeUrl?.Text?.Trim() ?? ServerPreferences.GetBridgeUrl(this);
+        var serverId = _bridgeServerId?.Text?.Trim() ?? ServerPreferences.GetBridgeServerId(this);
+        var secret = _bridgeSecret?.Text?.Trim() ?? ServerPreferences.GetBridgeSecret(this);
+        var text =
+            $"Render env:\nBRIDGE_SECRET={secret}\n\n" +
+            $"Endstone config.toml:\n[bridge]\nenabled = {enabled.ToString().ToLowerInvariant()}\n" +
+            $"url = \"{url}\"\nserver_id = \"{serverId}\"\nsecret = \"{secret}\"\nreconnect_seconds = 5\n";
+
+        if (GetSystemService(ClipboardService) is global::Android.Content.ClipboardManager clipboard)
+        {
+            clipboard.PrimaryClip = ClipData.NewPlainText("VoiceCraft bridge setup", text);
+            Toast.MakeText(this, "Bridge setup copied — contains the bridge secret", ToastLength.Long)?.Show();
         }
     }
 
@@ -249,6 +337,39 @@ public sealed class MainActivity : Activity
             clipboard.PrimaryClip = ClipData.NewPlainText("VoiceCraft Server log", text);
             Toast.MakeText(this, "Log copied", ToastLength.Short)?.Show();
         }
+    }
+
+    private static bool ValidateBridge(string url, string serverId, string secret, out string error)
+    {
+        if (string.IsNullOrWhiteSpace(serverId))
+        {
+            error = "Bridge server ID is required";
+            return false;
+        }
+        if (secret.Length < 16)
+        {
+            error = "Bridge secret must be at least 16 characters";
+            return false;
+        }
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri) || uri.Scheme is not ("ws" or "wss"))
+        {
+            error = "Relay URL must start with ws:// or wss://";
+            return false;
+        }
+        if (url.Contains("YOUR-RELAY", StringComparison.OrdinalIgnoreCase))
+        {
+            error = "Replace YOUR-RELAY with your Render relay URL";
+            return false;
+        }
+        error = string.Empty;
+        return true;
+    }
+
+    private static string SafeBridgeUrl(string url)
+    {
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri))
+            return "(not configured)";
+        return uri.GetLeftPart(UriPartial.Path);
     }
 
     private void StartRefreshLoop()
