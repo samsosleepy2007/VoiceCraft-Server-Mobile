@@ -8,6 +8,7 @@ on:
       - "VoiceCraft.Upstream"
       - "VoiceCraft.Server.Android/**"
       - "tools/apply_phase1.py"
+      - "tools/apply_android_console_fix.py"
       - ".github/workflows/build-android.yml"
       - ".gitmodules"
 
@@ -29,6 +30,9 @@ jobs:
 
       - name: Apply Android headless runtime patch
         run: python tools/apply_phase1.py VoiceCraft.Upstream
+
+      - name: Disable Spectre.Console for Android headless mode
+        run: python tools/apply_android_console_fix.py VoiceCraft.Upstream
 
       - name: Setup .NET 10
         uses: actions/setup-dotnet@v4
