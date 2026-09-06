@@ -30,6 +30,24 @@ jobs:
       - name: Compile plugin source
         run: python -m compileall -q VoiceCraft.Endstone/src
 
+      - name: Validate Endstone event annotations
+        env:
+          PYTHONPATH: VoiceCraft.Endstone/src
+        run: |
+          python - <<'PY'
+          import inspect
+          from endstone.event import PlayerJoinEvent, PlayerQuitEvent
+          from endstone_voicecraft.listener import VoiceCraftListener
+
+          join_annotation = inspect.signature(VoiceCraftListener.on_player_join).parameters["event"].annotation
+          quit_annotation = inspect.signature(VoiceCraftListener.on_player_quit).parameters["event"].annotation
+          assert join_annotation is PlayerJoinEvent, repr(join_annotation)
+          assert quit_annotation is PlayerQuitEvent, repr(quit_annotation)
+          assert inspect.isclass(join_annotation)
+          assert inspect.isclass(quit_annotation)
+          print("Endstone event handler annotations resolve to runtime classes")
+          PY
+
       - name: Build wheel
         working-directory: VoiceCraft.Endstone
         run: python -m build --wheel
@@ -54,10 +72,16 @@ jobs:
           PY
           python -m pip install --no-deps dist/*.whl
           python - <<'PY'
+          import inspect
+          from endstone.event import PlayerJoinEvent, PlayerQuitEvent
           from endstone_voicecraft import VoiceCraftEndstone
+          from endstone_voicecraft.listener import VoiceCraftListener
+
           assert VoiceCraftEndstone.api_version == "0.11"
-          assert VoiceCraftEndstone.version == "0.1.0"
-          print("Endstone plugin import OK")
+          assert VoiceCraftEndstone.version == "0.1.1"
+          assert inspect.signature(VoiceCraftListener.on_player_join).parameters["event"].annotation is PlayerJoinEvent
+          assert inspect.signature(VoiceCraftListener.on_player_quit).parameters["event"].annotation is PlayerQuitEvent
+          print("Endstone plugin import and event annotations OK")
           PY
 
       - name: Upload Endstone wheel
