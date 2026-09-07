@@ -19,7 +19,7 @@ jobs:
           ref: android-ui4.2-endstone-0.2.3
 
       - name: Apply source changes
-        run: python .github/scripts/apply_ui42.py
+        run: python .github/scripts/apply_ui42_source_only.py
 
       - name: Verify patch markers
         run: |
@@ -30,12 +30,11 @@ jobs:
           grep -q '_RECONNECT_FORM_DELAY_TICKS = 100' VoiceCraft.Endstone/src/endstone_voicecraft/auto_rebind.py
           grep -q 'voice_client_disconnected' VoiceCraft.Bridge.Relay/index.js
 
-      - name: Commit patched source and remove one-shot files
+      - name: Commit patched source
         shell: bash
         run: |
-          git rm .github/workflows/apply-ui42-plan.yml .github/scripts/apply_ui42.py
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A
+          git add VoiceCraft.Server.Android VoiceCraft.Bridge.Relay VoiceCraft.Endstone README.md CHANGELOG.md
           git commit -m "Add Android UI4.2 dashboard and automatic VoiceCraft rebind"
           git push origin HEAD:android-ui4.2-endstone-0.2.3
