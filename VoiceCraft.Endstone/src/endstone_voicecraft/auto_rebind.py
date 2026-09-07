@@ -16,21 +16,37 @@ class VoiceCraftEndstone(VoiceCraftEndstone022):
     def __init__(self) -> None:
         super().__init__()
         self._rebind_waiting: set[str] = set()
+        # Remember the currently bound Android VoiceCraft entity so a delayed
+        # disconnect event from an older entity cannot reopen the form after a
+        # successful rebind.
+        self._bound_entity_by_player: dict[str, int] = {}
 
     def on_disable(self) -> None:
         self._rebind_waiting.clear()
+        self._bound_entity_by_player.clear()
         super().on_disable()
 
     def handle_player_quit(self, player: Player) -> None:
-        self._rebind_waiting.discard(self._player_key(player))
+        player_key = self._player_key(player)
+        self._rebind_waiting.discard(player_key)
+        self._bound_entity_by_player.pop(player_key, None)
         super().handle_player_quit(player)
 
     def _handle_bind_result(self, message: dict[str, Any]) -> None:
         player_key = str(message.get("xuid", "") or message.get("uuid", ""))
         success = bool(message.get("success", False))
         super()._handle_bind_result(message)
-        if success and player_key:
-            self._rebind_waiting.discard(player_key)
+
+        if not success or not player_key:
+            return
+
+        self._rebind_waiting.discard(player_key)
+        try:
+            entity_id = int(message.get("entityId"))
+        except (TypeError, ValueError):
+            entity_id = None
+        if entity_id is not None:
+            self._bound_entity_by_player[player_key] = entity_id
 
     def _drain_bridge_messages(self) -> None:
         if self._bridge is None:
@@ -49,10 +65,28 @@ class VoiceCraftEndstone(VoiceCraftEndstone022):
         if not player_key or player_key in self._rebind_waiting:
             return
 
+        try:
+            disconnected_entity = int(message.get("entityId"))
+        except (TypeError, ValueError):
+            disconnected_entity = None
+
+        expected_entity = self._bound_entity_by_player.get(player_key)
+        if (
+            expected_entity is not None
+            and disconnected_entity is not None
+            and disconnected_entity != expected_entity
+        ):
+            self.logger.info(
+                f"VOICE DISCONNECT stale event ignored player_key={player_key[:12]} "
+                f"entity={disconnected_entity} current_entity={expected_entity}"
+            )
+            return
+
         player = self._find_online_player(player_key)
         if player is None:
             return
 
+        self._bound_entity_by_player.pop(player_key, None)
         self._bound_players.discard(player_key)
         self._pending_bind_keys.pop(player_key, None)
         self._pending_bind_requests.pop(player_key, None)
