@@ -2,7 +2,7 @@
 
 Android/mobile host for **VoiceCraft v1.7.1** with an Endstone + Render control-plane bridge for hosted Minecraft Bedrock servers.
 
-Current Android app version: **`1.7.1-android-phase2-ui4`** (version code `6`).
+Current Android app version: **`1.7.1-android-phase2-ui4.1`** (version code `7`).
 
 > The VoiceCraft v1.7.1 wire protocol is kept unchanged. `VoiceCraft.Upstream` is pinned to commit `85aaccccbb58adb23e8c87144e8b1c24bf4b2011`.
 
@@ -46,6 +46,7 @@ The Render relay carries **Minecraft player state + binding control data**. Voic
 - Setup popup that jumps directly to the field that must be fixed
 - Detailed in-app setup guide and Render shortcut
 - Soft modern UI with rounded cards, floating navigation and interaction animations
+- UI4.1 native click-dispatch hotfix so animation-only touch handlers no longer swallow button actions
 
 ## UI4 design refresh
 
@@ -61,6 +62,20 @@ UI4 changes the Android interface toward a soft modern productivity-app style wh
 - status pulse when server state changes
 - improved bridge flow and automatic diagnostic-help cards
 - old UI3 launcher kept compiled only as a disabled fallback/reference
+
+### UI4.1 interaction hotfix
+
+UI4.1 keeps the UI4 design unchanged and repairs the shared Android button interaction layer.
+
+The root cause was the managed `.Touch` event used for press animation. In .NET for Android, listener callbacks that return `bool` expose `EventArgs.Handled`; the generated event starts handled unless explicitly changed. The UI4 animation handler subscribed to `Touch` but did not set `Handled = false`, so the press animation could run while the native `Click` / `PerformClick()` action never fired.
+
+UI4.1 fixes that centrally in `AppButton.cs`:
+
+- animation touch events explicitly pass through with `Handled = false`
+- Android native `Button` click/accessibility behavior remains the source of truth
+- every native click writes a `CLICK:` diagnostic entry
+- exceptions thrown by a button action are caught at the shared button layer, written as `ACTION ERROR`, and surfaced to the user instead of looking like a dead button
+- existing UI4 scale/fade animation and haptic feedback are preserved
 
 ## Required setup
 
@@ -238,6 +253,15 @@ VoiceCraft.Endstone/dist/
 ```
 
 ## Version history
+
+### Android UI4.1 — `1.7.1-android-phase2-ui4.1` / code 7
+
+- fixed the UI4 bug where every button animated on touch but the actual action could be swallowed before native `Click`
+- explicitly keeps animation-only `.Touch` events non-consuming with `Handled = false`
+- preserves Android native `PerformClick()` behavior for click, sound and accessibility
+- logs successful native click dispatch with `CLICK:` diagnostics
+- catches unexpected button-action exceptions and reports `ACTION ERROR` instead of silently appearing unresponsive
+- keeps the UI4 design, animations, haptics, validation and server logic unchanged
 
 ### Android UI4 — `1.7.1-android-phase2-ui4` / code 6
 
