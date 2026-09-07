@@ -3,7 +3,7 @@ name: Build Endstone Plugin
 on:
   workflow_dispatch:
   push:
-    branches: [main, endstone-phase2, endstone-0.2.1-ui4.1-release, endstone-auto-bind-form]
+    branches: [main, endstone-phase2, endstone-0.2.1-ui4.1-release]
     paths:
       - "VoiceCraft.Endstone/**"
       - "VoiceCraft.Bridge.Relay/**"
