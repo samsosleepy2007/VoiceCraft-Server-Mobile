@@ -8,8 +8,8 @@
     <SupportedOSPlatformVersion>23</SupportedOSPlatformVersion>
     <TargetPlatformVersion>36.1</TargetPlatformVersion>
     <ApplicationId>chat.voicecraft.server</ApplicationId>
-    <ApplicationVersion>5</ApplicationVersion>
-    <ApplicationDisplayVersion>1.7.1-android-phase2-ui3</ApplicationDisplayVersion>
+    <ApplicationVersion>6</ApplicationVersion>
+    <ApplicationDisplayVersion>1.7.1-android-phase2-ui4</ApplicationDisplayVersion>
     <AndroidPackageFormat>apk</AndroidPackageFormat>
     <EmbedAssembliesIntoApk>true</EmbedAssembliesIntoApk>
     <RunAOTCompilation>false</RunAOTCompilation>

@@ -275,7 +275,7 @@ public sealed class VoiceCraftServerService : Service
 
     private Notification BuildNotification(string text)
     {
-        var launchIntent = new Intent(this, typeof(MainActivity));
+        var launchIntent = new Intent(this, typeof(ModernMainActivity));
         var pendingFlags = PendingIntentFlags.UpdateCurrent;
         if (Build.VERSION.SdkInt >= BuildVersionCodes.M)
             pendingFlags |= PendingIntentFlags.Immutable;

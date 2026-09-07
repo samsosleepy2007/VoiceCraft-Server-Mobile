@@ -1,19 +1,178 @@
 # VoiceCraft Server Mobile
 
-Android/mobile server host for **VoiceCraft v1.7.1**.
+Android/mobile host for **VoiceCraft v1.7.1** with an Endstone + Render control-plane bridge for hosted Minecraft Bedrock servers.
 
-This project keeps the VoiceCraft 1.7.1 wire protocol unchanged. The original VoiceCraft source is pinned as the `VoiceCraft.Upstream` git submodule at tag `v1.7.1` / commit `85aaccccbb58adb23e8c87144e8b1c24bf4b2011`, while this repository contains the Android host and a small build-time patch that makes the desktop server runtime reusable from an Android Foreground Service.
+Current Android app version: **`1.7.1-android-phase2-ui4`** (version code `6`).
 
-## Phase 1 goals
+> The VoiceCraft v1.7.1 wire protocol is kept unchanged. `VoiceCraft.Upstream` is pinned to commit `85aaccccbb58adb23e8c87144e8b1c24bf4b2011`.
 
-- Android ARM64 APK
-- Original LiteNetLib VoiceCraft UDP server, default UDP `9050`
-- McHttp transport on the same numeric TCP port, default TCP `9050`
-- Android Foreground Service + partial wake lock
-- App-private writable server config/log storage
-- Start / Stop / connection-info UI
-- Stock VoiceCraft 1.7.x client/addon protocol; no packet or Opus re-encoding changes
-- LAN-first deployment
+## What this project contains
+
+```text
+Minecraft Bedrock @ MCSV
+        │
+        ▼
+Endstone VoiceCraft plugin
+        │ outbound WSS
+        ▼
+Render Relay
+        │ outbound WSS
+        ▼
+VoiceCraft Server Mobile (Android)
+        │
+        ├─ VoiceCraft UDP server
+        ├─ McHttp TCP compatibility transport
+        ├─ player/entity state bridge
+        └─ binding support
+```
+
+The Render relay carries **Minecraft player state + binding control data**. Voice audio still uses VoiceCraft/LiteNetLib UDP directly to the Android server.
+
+## Android app highlights
+
+- Native .NET 10 Android ARM64 APK
+- Foreground Service + partial wake lock
+- VoiceCraft UDP server, default UDP `9050`
+- Android raw `TcpListener` McHttp compatibility transport, default TCP `9050`
+- Required Render Relay preflight before startup
+- Render Service URL → automatic `wss://.../bridge` conversion
+- Ready-to-paste Endstone `config.toml` generator
+- Copy buttons for IP, port, IP:port, WSS, Bridge Secret, Server Key, plugin config and complete setup
+- Thai UI by default with Thai / English switching
+- Light and dark themes
+- Thai-localized runtime logs
+- Error diagnosis with likely cause and suggested fix
+- Red validation highlights for missing/invalid required setup
+- Setup popup that jumps directly to the field that must be fixed
+- Detailed in-app setup guide and Render shortcut
+- Soft modern UI with rounded cards, floating navigation and interaction animations
+
+## UI4 design refresh
+
+UI4 changes the Android interface toward a soft modern productivity-app style while keeping the blue/white VoiceCraft identity:
+
+- softer blue / indigo surfaces and more whitespace
+- larger rounded cards and floating bottom navigation
+- center Start / Stop action in the bottom bar
+- gradient server-status hero card
+- animated page entrance and card motion
+- press scale/fade feedback + haptic feedback on buttons
+- animated focus feedback on inputs
+- status pulse when server state changes
+- improved bridge flow and automatic diagnostic-help cards
+- old UI3 launcher kept compiled only as a disabled fallback/reference
+
+## Required setup
+
+### 1. Deploy the Render relay
+
+Create a Render Web Service from this repository using:
+
+```text
+Root Directory: VoiceCraft.Bridge.Relay
+Runtime: Node
+Build Command: npm install --omit=dev
+Start Command: npm start
+Health Check Path: /health
+```
+
+Add the environment variable:
+
+```text
+BRIDGE_SECRET=<strong-random-secret>
+```
+
+After deployment, Render gives a normal HTTPS service URL such as:
+
+```text
+https://voicecraft-server-mobile.onrender.com
+```
+
+Paste that URL into the Android app. The app generates:
+
+```text
+wss://voicecraft-server-mobile.onrender.com/bridge
+```
+
+### 2. Configure the Android app
+
+Open **Bridge** and provide:
+
+```text
+Render Service URL
+Server ID      (default: mcsv-main)
+Bridge Secret  (must match BRIDGE_SECRET on Render)
+```
+
+The app will not start VoiceCraft Server until these required values and the server port pass validation.
+
+### 3. Install the Endstone plugin
+
+Use Endstone `0.11.x` on the Minecraft Bedrock host and install the built wheel from `VoiceCraft.Endstone`.
+
+The current plugin line is:
+
+```text
+endstone_voicecraft-0.2.0-py3-none-any.whl
+```
+
+Start the Minecraft server once, then use **Copy Plugin Config** in the Android app and paste the generated config into the plugin `config.toml`.
+
+The generated bridge section looks like:
+
+```toml
+[bridge]
+enabled = true
+url = "wss://your-service.onrender.com/bridge"
+server_id = "mcsv-main"
+secret = "YOUR_SHARED_SECRET"
+reconnect_seconds = 5
+```
+
+### 4. Start VoiceCraft Server
+
+Tap **Start Server** on Home or the center button in the bottom navigation.
+
+Before anything launches, the app checks:
+
+```text
+Voice / McHttp Port
+Render Service URL
+Generated WebSocket URL
+Server ID
+Bridge Secret
+```
+
+If something is missing or invalid, startup is blocked and the app shows exactly what must be fixed and where.
+
+### 5. Connect VoiceCraft Client
+
+For current LAN testing, connect a compatible VoiceCraft `1.7.x` client to:
+
+```text
+<ANDROID_LAN_IP>:9050
+```
+
+Set positioning to **Server**.
+
+After the VoiceCraft client receives a binding key, bind from Minecraft with:
+
+```text
+/vcbind ABC12
+```
+
+Replace `ABC12` with the actual key shown by the VoiceCraft client.
+
+## Repository layout
+
+```text
+VoiceCraft.Upstream/             pinned VoiceCraft v1.7.1 source
+VoiceCraft.Server.Android/       Android server host + UI
+VoiceCraft.Endstone/             Endstone plugin
+VoiceCraft.Bridge.Relay/         Render Node/WebSocket relay
+tools/                           build-time upstream patches
+.github/workflows/               Android / Endstone / relay CI
+```
 
 ## Clone
 
@@ -28,13 +187,25 @@ If the repository was cloned without submodules:
 git submodule update --init --recursive
 ```
 
-## Build locally
+## Build Android locally
 
-Requirements: .NET 10 SDK, .NET Android workload, Android SDK/API 36.
+Requirements:
+
+- .NET 10 SDK
+- .NET Android workload
+- Android SDK / API 36
+- Java 17
+
+The CI build applies the Android runtime patches before publish:
 
 ```bash
 python tools/apply_phase1.py VoiceCraft.Upstream
+python tools/apply_android_console_fix.py VoiceCraft.Upstream
+python tools/apply_android_tcp_mchttp.py VoiceCraft.Upstream
+python tools/apply_bridge_runtime.py VoiceCraft.Upstream
+
 dotnet workload restore VoiceCraft.Server.Android/VoiceCraft.Server.Android.csproj
+dotnet restore VoiceCraft.Server.Android/VoiceCraft.Server.Android.csproj
 dotnet publish VoiceCraft.Server.Android/VoiceCraft.Server.Android.csproj -c Release -r android-arm64
 ```
 
@@ -44,29 +215,116 @@ APK output:
 VoiceCraft.Server.Android/bin/Release/net10.0-android/android-arm64/publish/*.apk
 ```
 
-The patch intentionally modifies only the checked-out submodule working tree. Reset it any time with:
+The patch scripts modify only the checked-out submodule working tree. Reset it with:
 
 ```bash
 git -C VoiceCraft.Upstream reset --hard
 git -C VoiceCraft.Upstream clean -fd
 ```
 
-## Android test order
+## Build Endstone plugin
 
-1. Install the ARM64 APK.
-2. Set Android battery usage for VoiceCraft Server to **Unrestricted**.
-3. Start the server on port `9050`.
-4. Connect a normal VoiceCraft client from another device to `<PHONE_LAN_IP>:9050`.
-5. Connect the Bedrock addon to `http://<PHONE_LAN_IP>:9050` with the server key shown by the app.
-6. Bind two players and verify position/proximity audio routing.
-7. Turn the phone screen off for 10+ minutes and verify the server remains reachable.
+From `VoiceCraft.Endstone`:
 
-## Phase 1 limitation
+```bash
+python -m pip install build
+python -m build --wheel
+```
 
-Phase 1 is LAN-first. CGNAT/public-internet reachability is not solved here; a relay/tunnel mode belongs in a later phase.
+The wheel is produced under:
+
+```text
+VoiceCraft.Endstone/dist/
+```
+
+## Version history
+
+### Android UI4 — `1.7.1-android-phase2-ui4` / code 6
+
+- soft productivity-style blue/white interface
+- gradient hero card and floating bottom navigation
+- center Start / Stop action
+- animated page/card entrance
+- button press scale/fade + haptic feedback
+- input focus/status animations
+- diagnostics help card improvements
+- README and release history brought up to date
+
+### Android UI3 — `1.7.1-android-phase2-ui3` / code 5
+
+- Render Relay became mandatory before server startup
+- startup stops before Foreground Service / UDP / TCP if config is incomplete
+- second service-side preflight added for safety
+- guided popup lists missing fields and jumps to the affected page/field
+- red validation highlighting
+- top language/theme/info controls rebuilt to fix touch interaction
+- optional bridge switch removed because Render/Endstone is now part of the required architecture
+
+### Android UI2 — `1.7.1-android-phase2-ui2` / code 4
+
+- Thai became the default UI language
+- Thai / English switching
+- light / dark theme switching with persisted preference
+- `By SamSoSleepy` branding
+- button interaction feedback
+- in-app setup guide
+- Open Render shortcut
+- Thai log localization
+- common runtime/WebSocket/auth/network error diagnosis with cause + suggested fix
+
+### Android UI1 — `1.7.1-android-phase2-modern-ui1` / code 3
+
+- first blue/white card-based Android redesign
+- Home / Bridge / Logs / Settings navigation
+- Render URL → WebSocket `/bridge` generation
+- Bridge Secret generator and show/hide controls
+- quick-copy actions
+- ready-to-paste Endstone config generator
+- setup readiness/status overview
+
+### Phase 2 control plane — Endstone `0.2.0`
+
+- Endstone → Render outbound WSS bridge
+- Render relay authentication, cache, health endpoint and WebSocket forwarding
+- Android outbound WSS controller
+- player state sync: identity, dimension, position and rotation
+- `/vcbind` forwarding
+- one-use 5-character binding keys
+- pre-spawn invalid Y state filtering
+- server-tick `RuntimeDispatcher` so WebSocket callbacks do not mutate the VoiceCraft world from network threads
+- secrets and binding keys hidden from logs
+
+### Endstone Phase 1 — `0.1.0` / `0.1.1`
+
+- Endstone 0.11.x plugin package
+- player join/quit diagnostics
+- XUID / UUID / dimension / position / yaw / pitch tracking
+- `/vcbind`, `/vcunbind`, `/vcstatus`, `/vcdump`
+- scheduler tracking + heartbeat
+- `0.1.1` fixed Endstone event-handler annotations for real Endstone 0.11 runtime validation
+
+### Android Phase 1 / transport stabilization
+
+- initial native Android ARM64 host
+- VoiceCraft v1.7.1 headless runtime in Foreground Service
+- partial wake lock and private app storage
+- Spectre.Console headless compatibility fix
+- Android diagnostics UI/logging
+- Android `HttpListener` replaced with raw `TcpListener` HTTP/1.1 McHttp transport
+- localhost raw TCP probe added
+- cleartext McHttp enabled for Android LAN testing
+- LAN TCP 9050 reachability verified from another device
+
+Full release notes are also tracked in [`CHANGELOG.md`](CHANGELOG.md).
+
+## Current limitation
+
+The Phase 2 Render bridge solves the **Minecraft state/binding control plane** only.
+
+It does **not** provide a public UDP path for VoiceCraft audio. Remote Internet players still need a future UDP relay/tunnel design that preserves separate LiteNetLib peer identities.
 
 ## License / upstream
 
-VoiceCraft upstream is licensed under GNU GPL v3. The upstream license is included inside the pinned `VoiceCraft.Upstream` submodule. Changes in this repository are intended to remain GPL-compatible.
+VoiceCraft upstream is licensed under **GNU GPL v3**. The upstream license is included inside the pinned `VoiceCraft.Upstream` submodule. Changes in this repository are intended to remain GPL-compatible.
 
 Upstream: https://github.com/AvionBlock/VoiceCraft
