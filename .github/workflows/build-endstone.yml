@@ -3,9 +3,10 @@ name: Build Endstone Plugin
 on:
   workflow_dispatch:
   push:
-    branches: [main, endstone-phase2]
+    branches: [main, endstone-phase2, endstone-0.2.1-ui4.1-release]
     paths:
       - "VoiceCraft.Endstone/**"
+      - "VoiceCraft.Bridge.Relay/**"
       - ".github/workflows/build-endstone.yml"
 
 jobs:
@@ -22,25 +23,30 @@ jobs:
         with:
           python-version: "3.11"
 
+      - name: Setup Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
       - name: Install build and Endstone API
         run: |
           python -m pip install --upgrade pip
           python -m pip install build "endstone==0.11.10" "aiohttp>=3.9"
 
-      - name: Compile plugin source
-        run: python -m compileall -q VoiceCraft.Endstone/src
+      - name: Compile plugin source and tests
+        run: python -m compileall -q VoiceCraft.Endstone/src VoiceCraft.Endstone/tests
 
-      - name: Validate Endstone event annotations and spawn filter
+      - name: Validate Endstone API annotations and strict bridge config
         env:
           PYTHONPATH: VoiceCraft.Endstone/src
         run: |
           python - <<'PY'
           import inspect
           from endstone.event import PlayerJoinEvent, PlayerQuitEvent
+          from endstone_voicecraft import VoiceCraftEndstone
+          from endstone_voicecraft.compat import CompatibleEndstoneRelayClient
           from endstone_voicecraft.listener import VoiceCraftListener
           from endstone_voicecraft.model import PlayerState
-          from endstone_voicecraft.plugin import VoiceCraftEndstone
-          from endstone_voicecraft.bridge import EndstoneRelayClient
 
           join_annotation = inspect.signature(VoiceCraftListener.on_player_join).parameters["event"].annotation
           quit_annotation = inspect.signature(VoiceCraftListener.on_player_quit).parameters["event"].annotation
@@ -53,15 +59,35 @@ jobs:
           sentinel = PlayerState("Test", "1", "u", "Overworld", 0.0, 32768.0, 0.0, 0.0, 0.0)
           assert VoiceCraftEndstone._valid_state(valid)
           assert not VoiceCraftEndstone._valid_state(sentinel)
-          assert EndstoneRelayClient is not None
-          print("Endstone Phase 2 annotations, bridge import, and pre-spawn filter OK")
+          assert VoiceCraftEndstone.version == "0.2.1"
+          assert CompatibleEndstoneRelayClient is not None
+
+          good = (True, "wss://voicecraft-server-mobile.onrender.com/bridge", "mcsv-main", "0123456789abcdef0123456789abcdef")
+          ok, reason = VoiceCraftEndstone._validate_bridge_config(*good)
+          assert ok, reason
+          assert not VoiceCraftEndstone._validate_bridge_config(True, "https://host/bridge", "mcsv-main", "0123456789abcdef")[0]
+          assert not VoiceCraftEndstone._validate_bridge_config(True, "wss://host/", "mcsv-main", "0123456789abcdef")[0]
+          assert not VoiceCraftEndstone._validate_bridge_config(True, "wss://host/bridge?x=1", "mcsv-main", "0123456789abcdef")[0]
+          assert not VoiceCraftEndstone._validate_bridge_config(True, "wss://host/bridge", "mcsv-main", "short")[0]
+          assert not VoiceCraftEndstone._validate_bridge_config(True, "wss://host/bridge", "x" * 101, "0123456789abcdef")[0]
+          assert not VoiceCraftEndstone._validate_bridge_config(True, "wss://YOUR-RELAY.onrender.com/bridge", "mcsv-main", "0123456789abcdef")[0]
+          print("Endstone 0.2.1 annotations, spawn filter, and bridge validation OK")
           PY
+
+      - name: Install Render relay dependencies
+        working-directory: VoiceCraft.Bridge.Relay
+        run: npm install --omit=dev
+
+      - name: Run real Endstone / Render relay protocol contract
+        env:
+          PYTHONPATH: VoiceCraft.Endstone/src
+        run: python VoiceCraft.Endstone/tests/relay_contract.py
 
       - name: Build wheel
         working-directory: VoiceCraft.Endstone
         run: python -m build --wheel
 
-      - name: Validate wheel contents and entrypoint
+      - name: Validate wheel contents, metadata and entrypoint
         working-directory: VoiceCraft.Endstone
         shell: bash
         run: |
@@ -70,30 +96,40 @@ jobs:
           import zipfile
 
           wheel = glob.glob("dist/*.whl")[0]
+          assert "0.2.1" in wheel, wheel
           with zipfile.ZipFile(wheel) as zf:
               names = set(zf.namelist())
               assert "endstone_voicecraft/config.toml" in names, names
               assert "endstone_voicecraft/bridge.py" in names, names
+              assert "endstone_voicecraft/compat.py" in names, names
+              assert "endstone_voicecraft/plugin.py" in names, names
+
+              metadata = [name for name in names if name.endswith(".dist-info/METADATA")]
+              assert metadata, names
+              metadata_text = zf.read(metadata[0]).decode("utf-8")
+              assert "Version: 0.2.1" in metadata_text, metadata_text
+
               entry = [name for name in names if name.endswith(".dist-info/entry_points.txt")]
               assert entry, names
-              text = zf.read(entry[0]).decode("utf-8")
-              assert "voicecraft = endstone_voicecraft:VoiceCraftEndstone" in text, text
+              entry_text = zf.read(entry[0]).decode("utf-8")
+              assert "voicecraft = endstone_voicecraft:VoiceCraftEndstone" in entry_text, entry_text
           print(f"Validated {wheel}")
           PY
-          python -m pip install --no-deps dist/*.whl
+
+          python -m pip install --no-deps --force-reinstall dist/*.whl
           python - <<'PY'
           import inspect
           from endstone.event import PlayerJoinEvent, PlayerQuitEvent
           from endstone_voicecraft import VoiceCraftEndstone
+          from endstone_voicecraft.compat import CompatibleEndstoneRelayClient
           from endstone_voicecraft.listener import VoiceCraftListener
-          from endstone_voicecraft.bridge import EndstoneRelayClient
 
           assert VoiceCraftEndstone.api_version == "0.11"
-          assert VoiceCraftEndstone.version == "0.2.0"
+          assert VoiceCraftEndstone.version == "0.2.1"
           assert inspect.signature(VoiceCraftListener.on_player_join).parameters["event"].annotation is PlayerJoinEvent
           assert inspect.signature(VoiceCraftListener.on_player_quit).parameters["event"].annotation is PlayerQuitEvent
-          assert EndstoneRelayClient is not None
-          print("Endstone Phase 2 wheel import and event annotations OK")
+          assert CompatibleEndstoneRelayClient is not None
+          print("Endstone 0.2.1 installed wheel import and entrypoint OK")
           PY
 
       - name: Upload Endstone wheel
