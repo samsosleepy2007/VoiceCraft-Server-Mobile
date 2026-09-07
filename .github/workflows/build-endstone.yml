@@ -78,10 +78,10 @@ jobs:
         working-directory: VoiceCraft.Bridge.Relay
         run: npm install --omit=dev
 
-      - name: Run real Endstone / Render relay protocol contract
+      - name: Run real Endstone 0.2.1 / Render relay protocol contract
         env:
           PYTHONPATH: VoiceCraft.Endstone/src
-        run: python VoiceCraft.Endstone/tests/relay_contract.py
+        run: python VoiceCraft.Endstone/tests/relay_contract_021.py
 
       - name: Build wheel
         working-directory: VoiceCraft.Endstone
