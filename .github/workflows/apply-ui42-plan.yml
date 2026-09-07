@@ -1,0 +1,733 @@
+name: Apply UI4.2 Plan
+
+on:
+  push:
+    branches: [android-ui4.2-endstone-0.2.3]
+    paths:
+      - ".github/workflows/apply-ui42-plan.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  patch-source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: android-ui4.2-endstone-0.2.3
+
+      - name: Apply source changes
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          def read(path):
+              return Path(path).read_text(encoding="utf-8")
+
+          def write(path, text):
+              Path(path).write_text(text, encoding="utf-8")
+
+          def replace(path, old, new, count=1):
+              text = read(path)
+              if new in text:
+                  return
+              actual = text.count(old)
+              if actual < count:
+                  raise SystemExit(f"Patch anchor missing in {path}: expected >= {count}, found {actual}\n{old[:180]}")
+              text = text.replace(old, new, count)
+              write(path, text)
+
+          # Android version bump: UI4.2 / version code 8.
+          path = "VoiceCraft.Server.Android/VoiceCraft.Server.Android.csproj"
+          text = read(path)
+          text = text.replace("<ApplicationVersion>7</ApplicationVersion>", "<ApplicationVersion>8</ApplicationVersion>")
+          text = text.replace("<ApplicationDisplayVersion>1.7.1-android-phase2-ui4.1</ApplicationDisplayVersion>", "<ApplicationDisplayVersion>1.7.1-android-phase2-ui4.2</ApplicationDisplayVersion>")
+          write(path, text)
+
+          # Android bridge: publish a safe immutable dashboard snapshot and report a bound voice-client disconnect.
+          path = "VoiceCraft.Server.Android/EndstoneBridgeController.cs"
+          replace(path,
+          "namespace VoiceCraft.Server.Android;\n\ninternal sealed class EndstoneBridgeController : IAsyncDisposable",
+          """namespace VoiceCraft.Server.Android;
+
+internal sealed record BridgeDashboardPlayer(
+    string Name,
+    string Xuid,
+    string Uuid,
+    string Dimension,
+    float X,
+    float Y,
+    float Z,
+    bool Bound,
+    int? EntityId);
+
+internal sealed record BridgeDashboardSnapshot(
+    int MinecraftPlayers,
+    int BoundPlayers,
+    int UnboundPlayers,
+    IReadOnlyList<BridgeDashboardPlayer> Players)
+{
+    public static BridgeDashboardSnapshot Empty { get; } =
+        new(0, 0, 0, Array.Empty<BridgeDashboardPlayer>());
+}
+
+internal sealed class EndstoneBridgeController : IAsyncDisposable""")
+
+          replace(path,
+          "    private readonly Dictionary<int, string> _playerByEntity = new();\n    private Task? _runTask;",
+          "    private readonly Dictionary<int, string> _playerByEntity = new();\n    private volatile BridgeDashboardSnapshot _dashboardSnapshot = BridgeDashboardSnapshot.Empty;\n    private Task? _runTask;")
+
+          replace(path,
+          "    public bool EndstoneConnected { get; private set; }\n    public string LastError { get; private set; } = string.Empty;",
+          "    public bool EndstoneConnected { get; private set; }\n    public string LastError { get; private set; } = string.Empty;\n    public BridgeDashboardSnapshot DashboardSnapshot => _dashboardSnapshot;")
+
+          replace(path,
+          """    public void Start()
+    {
+        if (_runTask is not null)
+            return;
+        AndroidRuntimeLog.Append("BRIDGE", $"Phase 2 starting relay={SafeEndpoint(_relayUri)} server_id={_serverId}; secret hidden");
+        _attachTask = Task.Run(() => AttachRuntimeAsync(_cts.Token));
+        _runTask = Task.Run(() => RunRelayAsync(_cts.Token));
+    }
+""",
+          """    public void Start()
+    {
+        if (_runTask is not null)
+            return;
+        AndroidRuntimeLog.Append("BRIDGE", $"Phase 2 UI4.2 starting relay={SafeEndpoint(_relayUri)} server_id={_serverId}; secret hidden");
+        _attachTask = Task.Run(() => AttachRuntimeAsync(_cts.Token));
+        _runTask = Task.Run(() => RunRelayAsync(_cts.Token));
+    }
+
+    public void RequestSnapshot()
+    {
+        QueueOutgoing(new
+        {
+            type = "request_snapshot",
+            reason = "android-ui4.2"
+        });
+        AndroidRuntimeLog.Append("BRIDGE", "Requested fresh Endstone player snapshot");
+    }
+""")
+
+          replace(path,
+          """    private void OnEntityDestroyed(VoiceCraftEntity entity)
+    {
+        if (entity is not VoiceCraftNetworkEntity)
+            return;
+
+        if (_keyByEntity.Remove(entity.Id, out var key))
+            _unboundByKey.Remove(key);
+
+        if (_playerByEntity.Remove(entity.Id, out var playerKey))
+            _boundByPlayer.Remove(playerKey);
+
+        AndroidRuntimeLog.Append("BRIDGE", $"Voice client entity={entity.Id} removed from Endstone binding table");
+    }
+""",
+          """    private void OnEntityDestroyed(VoiceCraftEntity entity)
+    {
+        if (entity is not VoiceCraftNetworkEntity)
+            return;
+
+        if (_keyByEntity.Remove(entity.Id, out var key))
+            _unboundByKey.Remove(key);
+
+        BridgePlayerState? disconnectedPlayer = null;
+        if (_playerByEntity.Remove(entity.Id, out var playerKey))
+        {
+            _boundByPlayer.Remove(playerKey);
+            _latestStates.TryGetValue(playerKey, out disconnectedPlayer);
+        }
+
+        if (disconnectedPlayer is not null)
+        {
+            QueueOutgoing(new
+            {
+                type = "voice_client_disconnected",
+                xuid = disconnectedPlayer.Xuid,
+                uuid = disconnectedPlayer.Uuid,
+                name = disconnectedPlayer.Name,
+                entityId = entity.Id
+            });
+            AndroidRuntimeLog.Append(
+                "BRIDGE",
+                $"Voice client disconnected while Minecraft player={disconnectedPlayer.Name} remains online; rebind requested entity={entity.Id}");
+        }
+        else
+        {
+            AndroidRuntimeLog.Append("BRIDGE", $"Voice client entity={entity.Id} removed from Endstone binding table");
+        }
+
+        RefreshDashboardSnapshot();
+    }
+""")
+
+          replace(path,
+          """    private void ApplyPlayerState(BridgePlayerState state)
+    {
+        _latestStates[state.PlayerKey] = state;
+        if (!_boundByPlayer.TryGetValue(state.PlayerKey, out var entityId))
+            return;
+
+        if (_world?.GetEntity(entityId) is not VoiceCraftNetworkEntity entity || entity.Destroyed)
+        {
+            _boundByPlayer.Remove(state.PlayerKey);
+            _playerByEntity.Remove(entityId);
+            return;
+        }
+
+        ApplyStateToEntity(entity, state);
+    }
+""",
+          """    private void ApplyPlayerState(BridgePlayerState state)
+    {
+        _latestStates[state.PlayerKey] = state;
+        if (!_boundByPlayer.TryGetValue(state.PlayerKey, out var entityId))
+        {
+            RefreshDashboardSnapshot();
+            return;
+        }
+
+        if (_world?.GetEntity(entityId) is not VoiceCraftNetworkEntity entity || entity.Destroyed)
+        {
+            _boundByPlayer.Remove(state.PlayerKey);
+            _playerByEntity.Remove(entityId);
+            RefreshDashboardSnapshot();
+            return;
+        }
+
+        ApplyStateToEntity(entity, state);
+        RefreshDashboardSnapshot();
+    }
+""")
+
+          replace(path,
+          """        AndroidRuntimeLog.Append(
+            "BRIDGE",
+            $"BIND success player={state.Name} xuid={state.Xuid} entity={entityId} request={ShortId(request.RequestId)}");
+        SendBindResult(request, true, string.Empty, entityId);
+""",
+          """        AndroidRuntimeLog.Append(
+            "BRIDGE",
+            $"BIND success player={state.Name} xuid={state.Xuid} entity={entityId} request={ShortId(request.RequestId)}");
+        RefreshDashboardSnapshot();
+        SendBindResult(request, true, string.Empty, entityId);
+""")
+
+          replace(path,
+          """    private void HandlePlayerLeave(string playerKey, string name)
+    {
+        _latestStates.TryRemove(playerKey, out _);
+        if (!_boundByPlayer.Remove(playerKey, out var entityId))
+            return;
+
+        _playerByEntity.Remove(entityId);
+        if (_world?.GetEntity(entityId) is not VoiceCraftNetworkEntity entity || entity.Destroyed)
+            return;
+
+        entity.Name = "New Client";
+        entity.WorldId = string.Empty;
+        entity.Position = Vector3.Zero;
+        entity.Rotation = Vector2.Zero;
+        AssignBindingKey(entity);
+        AndroidRuntimeLog.Append("BRIDGE", $"UNBIND player={name} entity={entityId}; new key assigned");
+    }
+""",
+          """    private void HandlePlayerLeave(string playerKey, string name)
+    {
+        _latestStates.TryRemove(playerKey, out _);
+        if (!_boundByPlayer.Remove(playerKey, out var entityId))
+        {
+            RefreshDashboardSnapshot();
+            return;
+        }
+
+        _playerByEntity.Remove(entityId);
+        if (_world?.GetEntity(entityId) is not VoiceCraftNetworkEntity entity || entity.Destroyed)
+        {
+            RefreshDashboardSnapshot();
+            return;
+        }
+
+        entity.Name = "New Client";
+        entity.WorldId = string.Empty;
+        entity.Position = Vector3.Zero;
+        entity.Rotation = Vector2.Zero;
+        AssignBindingKey(entity);
+        AndroidRuntimeLog.Append("BRIDGE", $"UNBIND player={name} entity={entityId}; new key assigned");
+        RefreshDashboardSnapshot();
+    }
+""")
+
+          replace(path,
+          """    private void QueueOutgoing(object payload)
+    {
+""",
+          """    private void RefreshDashboardSnapshot()
+    {
+        var players = _latestStates.Values
+            .OrderBy(state => state.Name, StringComparer.OrdinalIgnoreCase)
+            .Select(state =>
+            {
+                var bound = _boundByPlayer.TryGetValue(state.PlayerKey, out var entityId);
+                return new BridgeDashboardPlayer(
+                    state.Name,
+                    state.Xuid,
+                    state.Uuid,
+                    state.Dimension,
+                    state.X,
+                    state.Y,
+                    state.Z,
+                    bound,
+                    bound ? entityId : null);
+            })
+            .ToArray();
+        var boundPlayers = players.Count(player => player.Bound);
+        _dashboardSnapshot = new BridgeDashboardSnapshot(
+            players.Length,
+            boundPlayers,
+            players.Length - boundPlayers,
+            players);
+    }
+
+    private void QueueOutgoing(object payload)
+    {
+""")
+
+          # Foreground service exposes the immutable dashboard and snapshot request to the UI.
+          path = "VoiceCraft.Server.Android/VoiceCraftServerService.cs"
+          replace(path,
+          "    private EndstoneBridgeController? _bridgeController;\n\n    public static bool IsServiceRunning",
+          "    private EndstoneBridgeController? _bridgeController;\n    private static EndstoneBridgeController? _activeBridgeController;\n\n    public static bool IsServiceRunning")
+          replace(path,
+          "    public static string BridgeStatus { get; private set; } = \"disabled\";\n    public static string BridgeLastError { get; private set; } = string.Empty;",
+          "    public static string BridgeStatus { get; private set; } = \"disabled\";\n    public static string BridgeLastError { get; private set; } = string.Empty;\n    internal static BridgeDashboardSnapshot BridgeDashboard { get; private set; } = BridgeDashboardSnapshot.Empty;")
+          replace(path,
+          "        BridgeLastError = string.Empty;\n        BridgeStatus = \"starting\";",
+          "        BridgeLastError = string.Empty;\n        BridgeStatus = \"starting\";\n        BridgeDashboard = BridgeDashboardSnapshot.Empty;")
+          replace(path,
+          """            _bridgeController = new EndstoneBridgeController(bridgeUrl, bridgeServerId, bridgeSecret);
+            _bridgeController.Start();
+            BridgeStatus = "starting";
+""",
+          """            _bridgeController = new EndstoneBridgeController(bridgeUrl, bridgeServerId, bridgeSecret);
+            _activeBridgeController = _bridgeController;
+            _bridgeController.Start();
+            BridgeStatus = "starting";
+""")
+          replace(path,
+          """            if (_bridgeController is not null)
+            {
+                await _bridgeController.DisposeAsync();
+                _bridgeController = null;
+            }
+            BridgeStatus = "disabled";
+            BridgeLastError = string.Empty;
+""",
+          """            var bridgeController = _bridgeController;
+            if (bridgeController is not null)
+                await bridgeController.DisposeAsync();
+            if (ReferenceEquals(_activeBridgeController, bridgeController))
+                _activeBridgeController = null;
+            _bridgeController = null;
+            BridgeDashboard = BridgeDashboardSnapshot.Empty;
+            BridgeStatus = "disabled";
+            BridgeLastError = string.Empty;
+""")
+          replace(path,
+          """    private static async Task ProbeMcHttpTcpAsync(int port)
+    {
+""",
+          """    internal static bool RequestBridgeSnapshot()
+    {
+        var controller = _activeBridgeController;
+        if (controller is null)
+            return false;
+        controller.RequestSnapshot();
+        return true;
+    }
+
+    private static async Task ProbeMcHttpTcpAsync(int port)
+    {
+""")
+          replace(path,
+          """                if (_bridgeController is not null)
+                {
+                    BridgeStatus = _bridgeController.Status;
+                    BridgeLastError = _bridgeController.LastError;
+                }
+""",
+          """                if (_bridgeController is not null)
+                {
+                    BridgeStatus = _bridgeController.Status;
+                    BridgeLastError = _bridgeController.LastError;
+                    BridgeDashboard = _bridgeController.DashboardSnapshot;
+                }
+""")
+
+          # UI4.2: live Minecraft/binding dashboard and manual snapshot refresh.
+          path = "VoiceCraft.Server.Android/ModernMainActivity.cs"
+          replace(path,
+          "    private TextView? _clientCount;\n    private TextView? _bridgeState;",
+          "    private TextView? _clientCount;\n    private TextView? _minecraftCount;\n    private TextView? _boundCount;\n    private TextView? _playerList;\n    private TextView? _bridgeState;")
+          replace(path,
+          """        metrics.AddView(MetricCard("0", T("Voice Clients", "Voice clients"), out _clientCount), Weight());
+        metrics.AddView(MetricCard(T("ออฟไลน์", "OFFLINE"), T("บริดจ์", "Bridge"), out _bridgeState), Weight());
+        hero.AddView(metrics);
+        body.AddView(hero, CardLayout());
+""",
+          """        metrics.AddView(MetricCard("0", T("Voice Clients", "Voice clients"), out _clientCount), Weight());
+        metrics.AddView(MetricCard(T("ออฟไลน์", "OFFLINE"), T("บริดจ์", "Bridge"), out _bridgeState), Weight());
+        hero.AddView(metrics);
+
+        var playerMetrics = new LinearLayout(this) { Orientation = Orientation.Horizontal };
+        playerMetrics.SetPadding(0, Dp(8), 0, 0);
+        playerMetrics.AddView(MetricCard("0", T("ผู้เล่น Minecraft", "Minecraft players"), out _minecraftCount), Weight());
+        playerMetrics.AddView(MetricCard("0", T("Bind แล้ว", "Bound"), out _boundCount), Weight());
+        hero.AddView(playerMetrics);
+        body.AddView(hero, CardLayout());
+""")
+          replace(path,
+          """        var control = Card(Tint, Border);
+""",
+          """        var players = Card();
+        players.AddView(SectionTitle(T("ผู้เล่นและสถานะ Bind", "Players & Binding"), Primary2));
+        players.AddView(Label(T("ข้อมูลมาจาก Endstone ผ่าน Render Relay และไม่แสดง Binding Key", "Live state comes from Endstone through Render Relay; binding keys are never shown here"), 12, Muted));
+        _playerList = Label(T("ยังไม่มีผู้เล่น Minecraft ที่ติดตาม", "No tracked Minecraft players yet"), 12, Ink);
+        _playerList.SetPadding(0, Dp(10), 0, 0);
+        _playerList.SetTextIsSelectable(true);
+        players.AddView(_playerList);
+        var playerButtons = ButtonRow();
+        AddButton(playerButtons, T("ขอ Snapshot", "REQUEST SNAPSHOT"), () =>
+        {
+            var queued = VoiceCraftServerService.RequestBridgeSnapshot();
+            Toast.MakeText(
+                this,
+                queued ? T("ขอข้อมูลผู้เล่นล่าสุดแล้ว", "Fresh player snapshot requested") : T("Bridge ยังไม่ทำงาน", "Bridge is not running"),
+                ToastLength.Short)?.Show();
+            RefreshUi();
+        }, primary: true);
+        AddButton(playerButtons, T("รีเฟรช", "REFRESH"), RefreshUi);
+        players.AddView(playerButtons);
+        body.AddView(players, CardLayout());
+
+        var control = Card(Tint, Border);
+""")
+          replace(path,
+          """        if (_clientCount != null)
+            _clientCount.Text = VcServerApp.ConnectedClients.ToString();
+        if (_bridgeState != null)
+""",
+          """        if (_clientCount != null)
+            _clientCount.Text = VcServerApp.ConnectedClients.ToString();
+
+        var dashboard = VoiceCraftServerService.BridgeDashboard;
+        if (_minecraftCount != null)
+            _minecraftCount.Text = dashboard.MinecraftPlayers.ToString();
+        if (_boundCount != null)
+            _boundCount.Text = dashboard.BoundPlayers.ToString();
+        if (_playerList != null)
+        {
+            if (dashboard.Players.Count == 0)
+            {
+                _playerList.Text = T("ยังไม่มีผู้เล่น Minecraft ที่ติดตาม", "No tracked Minecraft players yet");
+                _playerList.SetTextColor(Muted);
+            }
+            else
+            {
+                var rows = dashboard.Players.Take(20).Select(player =>
+                {
+                    var binding = player.Bound
+                        ? $"{T("Bind แล้ว", "BOUND")} • Entity #{player.EntityId}"
+                        : T("ยังไม่ Bind", "NOT BOUND");
+                    return $"{player.Name}\n{binding}\n{player.Dimension} • {player.X:0.0}, {player.Y:0.0}, {player.Z:0.0}";
+                });
+                var suffix = dashboard.Players.Count > 20
+                    ? T($"\n\nและอีก {dashboard.Players.Count - 20} คน", $"\n\n+ {dashboard.Players.Count - 20} more")
+                    : string.Empty;
+                _playerList.Text = string.Join("\n\n", rows) + suffix;
+                _playerList.SetTextColor(Ink);
+            }
+        }
+
+        if (_bridgeState != null)
+""")
+
+          # Relay: allow the additive protocol-1 disconnect notification from Android to Endstone.
+          path = "VoiceCraft.Bridge.Relay/index.js"
+          replace(path,
+          """    case "request_snapshot":
+    case "server_status":
+    case "entity_key":
+      sendJson(room.endstone, message);
+""",
+          """    case "request_snapshot":
+    case "server_status":
+    case "entity_key":
+    case "voice_client_disconnected":
+      sendJson(room.endstone, message);
+""")
+
+          # Endstone relay hello now advertises the actual subclass version.
+          path = "VoiceCraft.Endstone/src/endstone_voicecraft/compat.py"
+          replace(path,
+          """        reconnect_seconds: float = 5.0,
+        max_queue: int = 2048,
+    ) -> None:
+        super().__init__(logger, url, server_id, secret, reconnect_seconds, max_queue)
+        self._ever_connected = False
+""",
+          """        reconnect_seconds: float = 5.0,
+        max_queue: int = 2048,
+        plugin_version: str = "0.2.1",
+    ) -> None:
+        super().__init__(logger, url, server_id, secret, reconnect_seconds, max_queue)
+        self._plugin_version = str(plugin_version or "0.2.1")
+        self._ever_connected = False
+""")
+          replace(path, '                                "pluginVersion": "0.2.1",', '                                "pluginVersion": self._plugin_version,')
+          replace(path,
+          """                secret,
+                reconnect_seconds,
+            )
+""",
+          """                secret,
+                reconnect_seconds,
+                plugin_version=self.version,
+            )
+""")
+
+          # Endstone 0.2.3 adds automatic rebind after a bound VoiceCraft client disappears.
+          Path("VoiceCraft.Endstone/src/endstone_voicecraft/auto_rebind.py").write_text('''from __future__ import annotations
+
+from typing import Any
+
+from endstone import Player
+
+from .auto_bind import VoiceCraftEndstone as VoiceCraftEndstone022
+
+
+class VoiceCraftEndstone(VoiceCraftEndstone022):
+    """Endstone 0.2.3: automatic rebind UX after a VoiceCraft client disconnects."""
+
+    version = "0.2.3"
+    _RECONNECT_FORM_DELAY_TICKS = 100  # 5 seconds at 20 TPS
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._rebind_waiting: set[str] = set()
+
+    def on_disable(self) -> None:
+        self._rebind_waiting.clear()
+        super().on_disable()
+
+    def handle_player_quit(self, player: Player) -> None:
+        self._rebind_waiting.discard(self._player_key(player))
+        super().handle_player_quit(player)
+
+    def _handle_bind_result(self, message: dict[str, Any]) -> None:
+        player_key = str(message.get("xuid", "") or message.get("uuid", ""))
+        success = bool(message.get("success", False))
+        super()._handle_bind_result(message)
+        if success and player_key:
+            self._rebind_waiting.discard(player_key)
+
+    def _drain_bridge_messages(self) -> None:
+        if self._bridge is None:
+            return
+        for message in self._bridge.drain_incoming():
+            kind = str(message.get("type", ""))
+            if kind == "request_snapshot":
+                self._send_full_snapshot()
+            elif kind == "bind_result":
+                self._handle_bind_result(message)
+            elif kind == "voice_client_disconnected":
+                self._handle_voice_client_disconnected(message)
+
+    def _handle_voice_client_disconnected(self, message: dict[str, Any]) -> None:
+        player_key = str(message.get("xuid", "") or message.get("uuid", ""))
+        if not player_key or player_key in self._rebind_waiting:
+            return
+
+        player = self._find_online_player(player_key)
+        if player is None:
+            return
+
+        self._bound_players.discard(player_key)
+        self._pending_bind_keys.pop(player_key, None)
+        self._pending_bind_requests.pop(player_key, None)
+        self._auto_bind_shown.discard(player_key)
+        self._rebind_waiting.add(player_key)
+
+        player.send_error_message(
+            "VoiceCraft หลุด! จะดำเนินการให้ใส่ Binding Key ใหม่อีกครั้งใน 5 วินาที..."
+        )
+        self.logger.info(
+            f"VOICE DISCONNECT player={player.name} xuid={player.xuid}; rebind form scheduled in 5s"
+        )
+
+        def callback() -> None:
+            self._rebind_waiting.discard(player_key)
+            if player_key in self._bound_players or player_key in self._pending_bind_keys:
+                return
+            if self._find_online_player(player_key) is None:
+                return
+            self._auto_bind_shown.discard(player_key)
+            self._show_auto_bind_form(player_key)
+
+        try:
+            self.server.scheduler.run_task(
+                self,
+                callback,
+                delay=self._RECONNECT_FORM_DELAY_TICKS,
+            )
+        except Exception as exc:
+            self._rebind_waiting.discard(player_key)
+            self.logger.warning(
+                f"REBIND FORM schedule failed player_key={player_key[:12]}: {type(exc).__name__}: {exc}"
+            )
+            self._schedule_auto_bind_form(player_key, self._RECONNECT_FORM_DELAY_TICKS)
+''', encoding="utf-8")
+
+          write("VoiceCraft.Endstone/src/endstone_voicecraft/__init__.py", 'from .auto_rebind import VoiceCraftEndstone\n\n__all__ = ["VoiceCraftEndstone"]\n')
+
+          path = "VoiceCraft.Endstone/pyproject.toml"
+          replace(path, 'version = "0.2.2"', 'version = "0.2.3"')
+
+          # Contract test: Android disconnect event must reach Endstone without changing protocol number.
+          path = "VoiceCraft.Endstone/tests/relay_contract.py"
+          replace(path,
+          """            bind_result = await wait_incoming(client, "bind_result")
+            assert bind_result.get("success") is True
+            assert bind_result.get("entityId") == 7
+
+            other = await connect_role(session, "android", server_id="other-room")
+""",
+          """            bind_result = await wait_incoming(client, "bind_result")
+            assert bind_result.get("success") is True
+            assert bind_result.get("entityId") == 7
+
+            await android.send_json(
+                {
+                    "type": "voice_client_disconnected",
+                    "serverId": SERVER_ID,
+                    "xuid": state["xuid"],
+                    "uuid": state["uuid"],
+                    "name": state["name"],
+                    "entityId": 7,
+                }
+            )
+            disconnected = await wait_incoming(client, "voice_client_disconnected")
+            assert disconnected.get("xuid") == state["xuid"]
+            assert disconnected.get("entityId") == 7
+
+            other = await connect_role(session, "android", server_id="other-room")
+""")
+          text = read(path).replace("VoiceCraft Endstone 0.2.1 / Relay / Android protocol contract OK", "VoiceCraft Endstone 0.2.3 / Relay / Android protocol-1 contract OK")
+          write(path, text)
+
+          # CI branch coverage and Endstone 0.2.3 assertions.
+          path = ".github/workflows/build-endstone.yml"
+          text = read(path)
+          text = text.replace("branches: [main, endstone-phase2, endstone-0.2.1-ui4.1-release]", "branches: [main, endstone-phase2, endstone-0.2.1-ui4.1-release, android-ui4.2-endstone-0.2.3]")
+          text = text.replace('from endstone_voicecraft.auto_bind import VoiceCraftEndstone as AutoBindVoiceCraftEndstone', 'from endstone_voicecraft.auto_bind import VoiceCraftEndstone as AutoBindVoiceCraftEndstone\n          from endstone_voicecraft.auto_rebind import VoiceCraftEndstone as AutoRebindVoiceCraftEndstone')
+          text = text.replace('assert VoiceCraftEndstone is AutoBindVoiceCraftEndstone\n          assert VoiceCraftEndstone.version == "0.2.2"', 'assert VoiceCraftEndstone is AutoRebindVoiceCraftEndstone\n          assert issubclass(AutoRebindVoiceCraftEndstone, AutoBindVoiceCraftEndstone)\n          assert VoiceCraftEndstone.version == "0.2.3"')
+          text = text.replace('assert VoiceCraftEndstone._AUTO_FORM_RETRY_TICKS >= 1', 'assert VoiceCraftEndstone._AUTO_FORM_RETRY_TICKS >= 1\n          assert VoiceCraftEndstone._RECONNECT_FORM_DELAY_TICKS == 100')
+          text = text.replace("0.2.2", "0.2.3")
+          text = text.replace('assert "endstone_voicecraft/auto_bind.py" in names, names', 'assert "endstone_voicecraft/auto_bind.py" in names, names\n              assert "endstone_voicecraft/auto_rebind.py" in names, names')
+          # The global version replacement changes only version strings; ensure installed-entrypoint identity is checked too.
+          marker = '          from endstone_voicecraft import VoiceCraftEndstone\n          from endstone_voicecraft.compat import CompatibleEndstoneRelayClient'
+          if marker in text:
+              text = text.replace(marker, '          from endstone_voicecraft import VoiceCraftEndstone\n          from endstone_voicecraft.auto_rebind import VoiceCraftEndstone as AutoRebindVoiceCraftEndstone\n          from endstone_voicecraft.compat import CompatibleEndstoneRelayClient', 1)
+          text = text.replace('          assert VoiceCraftEndstone.api_version == "0.11"\n          assert VoiceCraftEndstone.version == "0.2.3"', '          assert VoiceCraftEndstone.api_version == "0.11"\n          assert VoiceCraftEndstone is AutoRebindVoiceCraftEndstone\n          assert VoiceCraftEndstone.version == "0.2.3"', 1)
+          write(path, text)
+
+          path = ".github/workflows/build-android.yml"
+          text = read(path).replace("branches: [main, endstone-phase2, modern-azure-ui]", "branches: [main, endstone-phase2, modern-azure-ui, android-ui4.2-endstone-0.2.3]")
+          text = text.replace("name: VoiceCraft-Server-Android-arm64-Phase2", "name: VoiceCraft-Server-Android-arm64-UI4.2")
+          write(path, text)
+
+          path = ".github/workflows/check-relay.yml"
+          text = read(path).replace("branches: [main, endstone-phase2]", "branches: [main, endstone-phase2, android-ui4.2-endstone-0.2.3]")
+          old = '''          await received;
+          endstone.close();
+          android.close();
+          console.log("Relay websocket forwarding OK");'''
+          new = '''          await received;
+
+          const disconnectReceived = new Promise((resolve, reject) => {
+            const timer = setTimeout(() => reject(new Error("voice_client_disconnected was not forwarded")), 5000);
+            endstone.on("message", (raw) => {
+              const msg = JSON.parse(raw.toString());
+              if (msg.type === "voice_client_disconnected" && msg.xuid === "123") {
+                clearTimeout(timer);
+                resolve(msg);
+              }
+            });
+          });
+          android.send(JSON.stringify({
+            type: "voice_client_disconnected",
+            serverId,
+            name: "CI",
+            xuid: "123",
+            uuid: "ci",
+            entityId: 7
+          }));
+          await disconnectReceived;
+
+          endstone.close();
+          android.close();
+          console.log("Relay websocket forwarding + disconnect event OK");'''
+          if old not in text:
+              raise SystemExit("check-relay insertion anchor missing")
+          text = text.replace(old, new, 1)
+          write(path, text)
+
+          # Documentation/version bookkeeping.
+          path = "README.md"
+          text = read(path)
+          text = text.replace("Current Android app version: **`1.7.1-android-phase2-ui4.1`** (version code `7`).", "Current Android app version: **`1.7.1-android-phase2-ui4.2`** (version code `8`).")
+          text = text.replace("Current Endstone plugin version: **`0.2.1`**, verified as the companion plugin for the UI4.1 release bundle.", "Current Endstone plugin version: **`0.2.3`**, paired with Android UI4.2 and Render Relay protocol 1.")
+          text = text.replace("- UI4.1 native click-dispatch hotfix so animation-only touch handlers no longer swallow button actions", "- UI4.1 native click-dispatch hotfix so animation-only touch handlers no longer swallow button actions\n- UI4.2 live Minecraft player / binding dashboard with Request Snapshot\n- Automatic 5-second rebind prompt when an already-bound VoiceCraft client disconnects")
+          write(path, text)
+
+          path = "VoiceCraft.Endstone/README.md"
+          text = read(path)
+          if "## Endstone 0.2.3" not in text:
+              text += '''\n\n## Endstone 0.2.3\n\n- Keeps the automatic join-time bind form from 0.2.2.\n- Receives `voice_client_disconnected` from Android when a bound VoiceCraft entity disappears while the Minecraft player remains online.\n- Sends a red in-game warning immediately, waits 5 seconds, then opens the same Binding Key form again.\n- Duplicate disconnect notifications are suppressed while the rebind timer is active.\n- If the player leaves or binds manually before the timer expires, the form is not reopened unnecessarily.\n- Render Relay protocol remains `1`; the new message is additive.\n'''
+          write(path, text)
+
+          path = "CHANGELOG.md"
+          text = read(path)
+          anchor = "The project keeps VoiceCraft upstream pinned to **v1.7.1** while evolving the Android host, Endstone integration, Render relay and user interface around it.\n"
+          section = '''\n## 2026-09-08 — Android UI4.2 + Endstone 0.2.3\n\nAndroid version: `1.7.1-android-phase2-ui4.2` (version code `8`)  \nEndstone plugin: `0.2.3`  \nRelay protocol: `1`\n\n### Added\n\n- Live Android dashboard for Minecraft players, bound/unbound status, entity ID, dimension and position.\n- Android `Request Snapshot` action for a fresh Endstone state snapshot.\n- Android detects destruction of an already-bound VoiceCraft client entity while its Minecraft player remains online.\n- New additive protocol-1 `voice_client_disconnected` control message forwarded through Render.\n- Endstone shows a red disconnect warning immediately and reopens the Binding Key form after 5 seconds.\n- Duplicate disconnect events are suppressed and manual binding/player quit cancels unnecessary rebind UI.\n\n### Preserved\n\n- VoiceCraft v1.7.1 wire protocol and direct LiteNetLib UDP voice path.\n- Render remains control plane only.\n- Auto Bind UI on initial join from Endstone 0.2.2.\n- Binding Keys and Bridge Secret remain hidden from logs/dashboard.\n\n---\n'''
+          if "## 2026-09-08 — Android UI4.2 + Endstone 0.2.3" not in text:
+              text = text.replace(anchor, anchor + section, 1)
+          write(path, text)
+
+          print("UI4.2 / Endstone 0.2.3 source patch applied")
+          PY
+
+      - name: Verify patch markers
+        run: |
+          grep -q 'ApplicationVersion>8<' VoiceCraft.Server.Android/VoiceCraft.Server.Android.csproj
+          grep -q 'voice_client_disconnected' VoiceCraft.Server.Android/EndstoneBridgeController.cs
+          grep -q 'BridgeDashboard' VoiceCraft.Server.Android/ModernMainActivity.cs
+          grep -q 'version = "0.2.3"' VoiceCraft.Endstone/pyproject.toml
+          grep -q '_RECONNECT_FORM_DELAY_TICKS = 100' VoiceCraft.Endstone/src/endstone_voicecraft/auto_rebind.py
+          grep -q 'voice_client_disconnected' VoiceCraft.Bridge.Relay/index.js
+
+      - name: Commit patched source and remove one-shot workflow
+        shell: bash
+        run: |
+          git rm .github/workflows/apply-ui42-plan.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Add Android UI4.2 dashboard and automatic VoiceCraft rebind"
+          git push origin HEAD:android-ui4.2-endstone-0.2.3
