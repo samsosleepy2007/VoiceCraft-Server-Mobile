@@ -4,6 +4,38 @@ All notable changes to VoiceCraft Server Mobile are recorded here.
 
 The project keeps VoiceCraft upstream pinned to **v1.7.1** while evolving the Android host, Endstone integration, Render relay and user interface around it.
 
+## 2026-09-07 — Android UI4.1 interaction hotfix
+
+Version: `1.7.1-android-phase2-ui4.1`  
+Android version code: `7`
+
+### Fixed
+
+- Fixed the UI4 bug where buttons visibly received touch/press animation but their actual `Click` actions did not run.
+- Root cause: the managed .NET for Android `View.Touch` event is generated from a Java listener that returns `bool`; generated `Handled` state defaults to handled unless explicitly changed. The UI4 animation-only touch subscription therefore consumed the gesture before the normal Android `Button` click path could complete.
+- The shared `AppButton` wrapper now explicitly sets touch `Handled = false` so animation-only touch listeners do not swallow the gesture.
+- Preserved the native Android `OnTouchEvent` / `PerformClick()` path for normal click behavior, accessibility and click sound semantics.
+
+### Diagnostics
+
+- Every native button click now records a `CLICK:` line in Android runtime diagnostics.
+- Unexpected exceptions thrown from a button action are caught at the shared button layer and recorded as `ACTION ERROR` with the button label, exception type and message.
+- A failed action also shows a user-visible toast instead of silently appearing to do nothing.
+
+### Preserved
+
+- UI4 visual design and layout.
+- page/card entrance animation.
+- press scale/fade animation.
+- haptic feedback.
+- Thai / English switching.
+- light / dark theme switching.
+- required Render Relay startup validation.
+- popup navigation to missing configuration.
+- Endstone config generator and copy actions.
+
+---
+
 ## 2026-09-07 — Android UI4
 
 Version: `1.7.1-android-phase2-ui4`  
