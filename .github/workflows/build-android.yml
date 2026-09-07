@@ -3,7 +3,7 @@ name: Build Android APK
 on:
   workflow_dispatch:
   push:
-    branches: [main, endstone-phase2, modern-azure-ui, ui4-click-hotfix]
+    branches: [main, endstone-phase2, modern-azure-ui]
     paths:
       - "VoiceCraft.Upstream"
       - "VoiceCraft.Server.Android/**"
