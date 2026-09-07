@@ -105,17 +105,17 @@ jobs:
           if ! grep -q "Endstone companion plugin 0.2.2" release-body.md; then
             cat >> release-body.md <<'EOF'
 
-### Endstone companion plugin 0.2.2
-- Added `endstone_voicecraft-0.2.2-py3-none-any.whl` to this same Android UI4.1 release.
-- Automatically opens a Minecraft Bedrock `ModalForm` for newly joined players that are not yet bound after their spawn position becomes valid.
-- The form accepts the VoiceCraft Binding Key and submits through the existing secure bind path; `/vcbind <key>` remains available as a fallback.
-- Closing the form while still unbound shows the reminder that the microphone cannot be used until binding is completed.
-- A rejected/wrong/expired key re-opens the form automatically so the player can correct it without typing a command.
-- Keeps the BDS pre-spawn `Y=32768` filter and never intentionally logs Binding Keys or the Bridge Secret.
-- Remains compatible with Android `1.7.1-android-phase2-ui4.1` and Render Relay protocol `1`; no Android APK or relay protocol change is required for this feature.
-- Endstone 0.11.10 / form API / protocol-1 relay contract validation passed in CI run `34143381596`.
-- Source merged to main in commit `eeb58871bd739fe2db40ddbac65180d97960f641`.
-EOF
+          ### Endstone companion plugin 0.2.2
+          - Added `endstone_voicecraft-0.2.2-py3-none-any.whl` to this same Android UI4.1 release.
+          - Automatically opens a Minecraft Bedrock `ModalForm` for newly joined players that are not yet bound after their spawn position becomes valid.
+          - The form accepts the VoiceCraft Binding Key and submits through the existing secure bind path; `/vcbind <key>` remains available as a fallback.
+          - Closing the form while still unbound shows the reminder that the microphone cannot be used until binding is completed.
+          - A rejected/wrong/expired key re-opens the form automatically so the player can correct it without typing a command.
+          - Keeps the BDS pre-spawn `Y=32768` filter and never intentionally logs Binding Keys or the Bridge Secret.
+          - Remains compatible with Android `1.7.1-android-phase2-ui4.1` and Render Relay protocol `1`; no Android APK or relay protocol change is required for this feature.
+          - Endstone 0.11.10 / form API / protocol-1 relay contract validation passed in CI run `34143381596`.
+          - Source merged to main in commit `eeb58871bd739fe2db40ddbac65180d97960f641`.
+          EOF
           fi
           gh release edit "$TAG" --notes-file release-body.md
 
