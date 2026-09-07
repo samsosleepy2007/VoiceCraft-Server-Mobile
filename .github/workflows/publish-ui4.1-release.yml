@@ -30,7 +30,7 @@ jobs:
         run: |
           set -euo pipefail
           SIGNED="$(find release-files -type f -name '*Signed.apk' | head -n1)"
-          UNSIGNED="$(find release-files -type f -name '*Unsigned.apk' | head -n1)"
+          UNSIGNED="$(find release-files -type f -name '*.apk' ! -name '*Signed.apk' | head -n1)"
           test -n "$SIGNED"
           test -n "$UNSIGNED"
 
