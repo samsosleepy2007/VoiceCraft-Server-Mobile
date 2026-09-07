@@ -16,7 +16,8 @@ internal static class RuntimeDiagnostics
             output.Add(line);
 
             if (sourceLine.Contains("Relay disconnected", StringComparison.OrdinalIgnoreCase) ||
-                sourceLine.Contains("FATAL:", StringComparison.OrdinalIgnoreCase))
+                sourceLine.Contains("FATAL:", StringComparison.OrdinalIgnoreCase) ||
+                sourceLine.Contains("START BLOCKED", StringComparison.OrdinalIgnoreCase))
             {
                 var advice = Describe(sourceLine, true);
                 if (!string.IsNullOrWhiteSpace(advice.Fix))
@@ -39,17 +40,21 @@ internal static class RuntimeDiagnostics
             (" PROBE: ", " ตรวจสอบ: "),
             (" POWER: ", " พลังงาน: "),
             (" FATAL: ", " ข้อผิดพลาดร้ายแรง: "),
+            (" HELP: ", " คำแนะนำ: "),
             ("MainActivity opened", "เปิดหน้าหลักของแอปแล้ว"),
             ("Log cleared", "ล้าง Log แล้ว"),
             ("START SERVER pressed", "กดปุ่มเริ่มเซิร์ฟเวอร์"),
+            ("START BLOCKED:", "หยุดการเริ่ม Server:"),
             ("STOP SERVER pressed", "กดปุ่มหยุดเซิร์ฟเวอร์"),
+            ("Language changed to", "เปลี่ยนภาษาเป็น"),
+            ("Theme changed to", "เปลี่ยนธีมเป็น"),
             ("Starting foreground server on port", "กำลังเริ่มเซิร์ฟเวอร์เบื้องหลังที่พอร์ต"),
             ("Start ignored: server task is already active", "ไม่เริ่มซ้ำ เพราะเซิร์ฟเวอร์กำลังทำงานอยู่แล้ว"),
             ("Stop action received", "ได้รับคำสั่งหยุดเซิร์ฟเวอร์"),
             ("App data:", "โฟลเดอร์ข้อมูลแอป:"),
+            ("Configured required outbound relay=", "ตั้งค่า Relay ที่จำเป็น="),
             ("Configured outbound relay=", "ตั้งค่า Relay ขาออก="),
             ("secret hidden", "ซ่อนค่า secret"),
-            ("Phase 2 bridge disabled in app settings", "ปิด Bridge Phase 2 ในการตั้งค่าแอป"),
             ("Partial wake lock acquired", "เปิด Partial wake lock เพื่อช่วยให้เซิร์ฟเวอร์ทำงานต่อเนื่องแล้ว"),
             ("Wake lock unavailable:", "ไม่สามารถใช้ wake lock ได้:"),
             ("Initializing VoiceCraft v1.7.1 server runtime", "กำลังเริ่มระบบ VoiceCraft Server v1.7.1"),
@@ -102,6 +107,17 @@ internal static class RuntimeDiagnostics
             return thai
                 ? new DiagnosticAdvice("ไม่พบข้อผิดพลาด", "ไม่มีข้อมูลข้อผิดพลาด", string.Empty)
                 : new DiagnosticAdvice("No error", "No error information", string.Empty);
+
+        if (ContainsAny(text, "CONFIG_REQUIRED", "required Render Relay configuration", "START BLOCKED"))
+            return thai
+                ? new DiagnosticAdvice(
+                    "ยังตั้งค่า Render Relay ไม่ครบ",
+                    "VoiceCraft Server ถูกหยุดก่อนเริ่ม เพราะ Render Service URL/WebSocket, Server ID หรือ Bridge Secret ยังขาดหรือไม่ถูกต้อง",
+                    "เปิดหน้า บริดจ์ (Bridge Setup) แล้วกรอกช่องกรอบสีแดงให้ครบ โดย Bridge Secret ต้องตรงกับ BRIDGE_SECRET บน Render และ WebSocket ต้องลงท้าย /bridge")
+                : new DiagnosticAdvice(
+                    "Required Render Relay setup is incomplete",
+                    "VoiceCraft Server startup was stopped because Render Service URL/WebSocket, Server ID or Bridge Secret is missing or invalid",
+                    "Open Bridge Setup and complete the red-highlighted fields. Bridge Secret must match BRIDGE_SECRET on Render and WebSocket must end with /bridge");
 
         if (ContainsAny(text, "404", "ConnectStatusExpected") && text.Contains("WebSocket", StringComparison.OrdinalIgnoreCase))
             return thai

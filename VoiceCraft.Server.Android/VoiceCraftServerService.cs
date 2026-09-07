@@ -41,7 +41,7 @@ public sealed class VoiceCraftServerService : Service
         }
 
         EnsureNotificationChannel();
-        StartForeground(NotificationId, BuildNotification(IsThai() ? "กำลังเริ่ม VoiceCraft Server…" : "Starting VoiceCraft server…"));
+        StartForeground(NotificationId, BuildNotification(IsThai() ? "กำลังตรวจสอบการตั้งค่าก่อนเริ่ม…" : "Checking required setup before start…"));
 
         if (_serverTask is { IsCompleted: false })
         {
@@ -57,44 +57,74 @@ public sealed class VoiceCraftServerService : Service
         if (string.IsNullOrWhiteSpace(key))
             key = ServerPreferences.GetServerKey(this);
 
-        var bridgeEnabled = ServerPreferences.GetBridgeEnabled(this);
         var bridgeUrl = ServerPreferences.GetBridgeUrl(this);
         var bridgeServerId = ServerPreferences.GetBridgeServerId(this);
         var bridgeSecret = ServerPreferences.GetBridgeSecret(this);
 
+        if (!IsValidBridgeConfig(bridgeUrl, bridgeServerId, bridgeSecret))
+        {
+            RejectStartupForMissingBridgeConfig(bridgeUrl, bridgeServerId, bridgeSecret);
+#pragma warning disable CS0618
+            StopForeground(true);
+#pragma warning restore CS0618
+            StopSelf();
+            return StartCommandResult.NotSticky;
+        }
+
         ServerPreferences.Save(this, port, key);
+        ServerPreferences.SaveBridge(this, true, bridgeUrl, bridgeServerId, bridgeSecret);
         IsServiceRunning = true;
         LastError = null;
         BridgeLastError = string.Empty;
-        BridgeStatus = bridgeEnabled ? "starting" : "disabled";
+        BridgeStatus = "starting";
         AndroidRuntimeLog.Append("SERVICE", $"Starting foreground server on port {port}");
         AndroidRuntimeLog.Append("SERVICE", $"App data: {FilesDir?.AbsolutePath ?? "(unknown)"}");
         AndroidRuntimeLog.Append(
             "BRIDGE",
-            bridgeEnabled
-                ? $"Configured outbound relay={SafeBridgeUrl(bridgeUrl)} server_id={bridgeServerId}; secret hidden"
-                : "Phase 2 bridge disabled in app settings");
+            $"Configured required outbound relay={SafeBridgeUrl(bridgeUrl)} server_id={bridgeServerId}; secret hidden");
         AcquireWakeLock();
 
         _notificationCts?.Cancel();
         _notificationCts?.Dispose();
         _notificationCts = new CancellationTokenSource();
         _ = NotificationLoopAsync(port, _notificationCts.Token);
-        _serverTask = Task.Run(() => RunServerAsync(port, key, bridgeEnabled, bridgeUrl, bridgeServerId, bridgeSecret));
+        _serverTask = Task.Run(() => RunServerAsync(port, key, bridgeUrl, bridgeServerId, bridgeSecret));
 
         return StartCommandResult.Sticky;
+    }
+
+    private void RejectStartupForMissingBridgeConfig(string url, string serverId, string secret)
+    {
+        var missing = new List<string>();
+        if (!IsBridgeUrlValid(url))
+            missing.Add("Render/WebSocket URL");
+        if (string.IsNullOrWhiteSpace(serverId))
+            missing.Add("Server ID");
+        if (string.IsNullOrWhiteSpace(secret) || secret.Length < 16)
+            missing.Add("Bridge Secret");
+
+        var missingText = missing.Count == 0 ? "bridge configuration" : string.Join(", ", missing);
+        LastError = $"CONFIG_REQUIRED: VoiceCraft Server startup was stopped because required Render Relay configuration is missing or invalid: {missingText}. Open Bridge Setup in the Android app.";
+        BridgeLastError = LastError;
+        BridgeStatus = "invalid-config";
+        IsServiceRunning = false;
+        AndroidRuntimeLog.Append("FATAL", LastError);
+        var advice = RuntimeDiagnostics.Describe(LastError, IsThai());
+        AndroidRuntimeLog.Append("HELP", $"{advice.Title} | Cause: {advice.Cause} | Fix: {advice.Fix}");
     }
 
     private async Task RunServerAsync(
         int port,
         string key,
-        bool bridgeEnabled,
         string bridgeUrl,
         string bridgeServerId,
         string bridgeSecret)
     {
         try
         {
+            if (!IsValidBridgeConfig(bridgeUrl, bridgeServerId, bridgeSecret))
+                throw new InvalidOperationException("CONFIG_REQUIRED: Render Relay configuration became invalid before runtime startup.");
+
             AndroidRuntimeLog.Append("RUNTIME", "Initializing VoiceCraft v1.7.1 server runtime");
             Program.InitializeRuntime(FilesDir?.AbsolutePath);
             ServerConsole.Sink = AndroidRuntimeLog.Append;
@@ -118,22 +148,9 @@ public sealed class VoiceCraftServerService : Service
                 ServerKey = key
             });
 
-            if (bridgeEnabled)
-            {
-                if (IsValidBridgeConfig(bridgeUrl, bridgeServerId, bridgeSecret))
-                {
-                    _bridgeController = new EndstoneBridgeController(bridgeUrl, bridgeServerId, bridgeSecret);
-                    _bridgeController.Start();
-                    BridgeStatus = "starting";
-                }
-                else
-                {
-                    BridgeStatus = "invalid-config";
-                    AndroidRuntimeLog.Append(
-                        "BRIDGE",
-                        "Bridge was enabled but URL/server id/secret is invalid. Server continues without Phase 2 bridge.");
-                }
-            }
+            _bridgeController = new EndstoneBridgeController(bridgeUrl, bridgeServerId, bridgeSecret);
+            _bridgeController.Start();
+            BridgeStatus = "starting";
 
             await appTask;
             AndroidRuntimeLog.Append("RUNTIME", "VoiceCraft server loop ended normally");
@@ -233,9 +250,18 @@ public sealed class VoiceCraftServerService : Service
     {
         if (string.IsNullOrWhiteSpace(serverId) || string.IsNullOrWhiteSpace(secret) || secret.Length < 16)
             return false;
+        return IsBridgeUrlValid(url);
+    }
+
+    private static bool IsBridgeUrlValid(string url)
+    {
         if (!Uri.TryCreate(url, UriKind.Absolute, out var uri))
             return false;
-        return uri.Scheme is "ws" or "wss" && !url.Contains("YOUR-RELAY", StringComparison.OrdinalIgnoreCase);
+        if (uri.Scheme is not ("ws" or "wss"))
+            return false;
+        if (string.IsNullOrWhiteSpace(uri.Host) || url.Contains("YOUR-RELAY", StringComparison.OrdinalIgnoreCase))
+            return false;
+        return string.Equals(uri.AbsolutePath.TrimEnd('/'), "/bridge", StringComparison.OrdinalIgnoreCase);
     }
 
     private static string SafeBridgeUrl(string url)
