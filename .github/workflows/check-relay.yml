@@ -3,7 +3,13 @@ name: Check Bridge Relay
 on:
   workflow_dispatch:
   push:
-    branches: [main, endstone-phase2]
+    branches: [main, endstone-phase2, android-ui4.2-endstone-0.2.3]
+    paths:
+      - "VoiceCraft.Bridge.Relay/**"
+      - "render.yaml"
+      - ".github/workflows/check-relay.yml"
+  pull_request:
+    branches: [main]
     paths:
       - "VoiceCraft.Bridge.Relay/**"
       - "render.yaml"
@@ -104,7 +110,29 @@ jobs:
           }));
 
           await received;
+
+          const disconnectReceived = new Promise((resolve, reject) => {
+            const timer = setTimeout(() => reject(new Error("voice_client_disconnected was not forwarded")), 5000);
+            endstone.on("message", (raw) => {
+              const msg = JSON.parse(raw.toString());
+              if (msg.type === "voice_client_disconnected" && msg.xuid === "123") {
+                clearTimeout(timer);
+                resolve(msg);
+              }
+            });
+          });
+
+          android.send(JSON.stringify({
+            type: "voice_client_disconnected",
+            serverId,
+            name: "CI",
+            xuid: "123",
+            uuid: "ci",
+            entityId: 7
+          }));
+
+          await disconnectReceived;
           endstone.close();
           android.close();
-          console.log("Relay websocket forwarding OK");
+          console.log("Relay websocket forwarding + disconnect event OK");
           NODE
