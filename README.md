@@ -2,7 +2,8 @@
 
 Android/mobile host for **VoiceCraft v1.7.1** with an Endstone + Render control-plane bridge for hosted Minecraft Bedrock servers.
 
-Current Android app version: **`1.7.1-android-phase2-ui4.1`** (version code `7`).
+Current Android app version: **`1.7.1-android-phase2-ui4.1`** (version code `7`).  
+Current Endstone plugin version: **`0.2.1`**, verified as the companion plugin for the UI4.1 release bundle.
 
 > The VoiceCraft v1.7.1 wire protocol is kept unchanged. `VoiceCraft.Upstream` is pinned to commit `85aaccccbb58adb23e8c87144e8b1c24bf4b2011`.
 
@@ -123,13 +124,13 @@ The app will not start VoiceCraft Server until these required values and the ser
 
 ### 3. Install the Endstone plugin
 
-Use Endstone `0.11.x` on the Minecraft Bedrock host and install the built wheel from `VoiceCraft.Endstone`.
-
-The current plugin line is:
+Use Endstone `0.11.x` on the Minecraft Bedrock host and install the verified companion wheel from the UI4.1 GitHub Release:
 
 ```text
-endstone_voicecraft-0.2.0-py3-none-any.whl
+endstone_voicecraft-0.2.1-py3-none-any.whl
 ```
+
+Plugin 0.2.1 keeps the existing Phase 2 protocol used by Android UI4.1, validates the Render bridge configuration before connecting, and adds reconnect/close diagnostics. CI verifies it against Endstone `0.11.10` and the repository's real Node relay.
 
 Start the Minecraft server once, then use **Copy Plugin Config** in the Android app and paste the generated config into the plugin `config.toml`.
 
@@ -142,6 +143,14 @@ url = "wss://your-service.onrender.com/bridge"
 server_id = "mcsv-main"
 secret = "YOUR_SHARED_SECRET"
 reconnect_seconds = 5
+```
+
+The following values must match:
+
+```text
+Render BRIDGE_SECRET = Android Bridge Secret = Endstone bridge.secret
+Android Server ID    = Endstone bridge.server_id
+Android WebSocket    = Endstone bridge.url = wss://<render-service>/bridge
 ```
 
 ### 4. Start VoiceCraft Server
@@ -253,6 +262,17 @@ VoiceCraft.Endstone/dist/
 ```
 
 ## Version history
+
+### Endstone 0.2.1 — UI4.1 companion
+
+- verified companion wheel for Android `1.7.1-android-phase2-ui4.1`
+- keeps Render Relay protocol `1` and the existing Android Phase 2 message contract
+- strict bridge config validation: `ws://`/`wss://`, hostname, exact `/bridge` path, Server ID up to 100 characters, Bridge Secret at least 16 characters, and no placeholder/query/fragment values
+- advertises `pluginVersion = 0.2.1`
+- improved reconnect-attempt, reconnect-success and WebSocket close diagnostics
+- `/vcunbind` wording now explicitly means “cancel pending bind request”; it does not unbind an already-bound VoiceCraft entity
+- real CI contract test covers authentication, peer status, player state, snapshot request, bind/bind-result, room isolation, bad-secret rejection and reconnect after relay restart
+- wheel CI validates Endstone 0.11.10 annotations, pre-spawn filtering, metadata, entrypoint, bundled config and installed-wheel import
 
 ### Android UI4.1 — `1.7.1-android-phase2-ui4.1` / code 7
 
