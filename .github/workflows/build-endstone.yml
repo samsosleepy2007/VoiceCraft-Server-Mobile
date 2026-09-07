@@ -3,7 +3,7 @@ name: Build Endstone Plugin
 on:
   workflow_dispatch:
   push:
-    branches: [main, endstone-phase2, endstone-0.2.1-ui4.1-release]
+    branches: [main, endstone-phase2, endstone-0.2.1-ui4.1-release, endstone-auto-bind-form]
     paths:
       - "VoiceCraft.Endstone/**"
       - "VoiceCraft.Bridge.Relay/**"
@@ -36,14 +36,16 @@ jobs:
       - name: Compile plugin source and tests
         run: python -m compileall -q VoiceCraft.Endstone/src VoiceCraft.Endstone/tests
 
-      - name: Validate Endstone API annotations and strict bridge config
+      - name: Validate Endstone API, auto-bind form, spawn filter and bridge config
         env:
           PYTHONPATH: VoiceCraft.Endstone/src
         run: |
           python - <<'PY'
           import inspect
           from endstone.event import PlayerJoinEvent, PlayerQuitEvent
+          from endstone.form import ModalForm, TextInput
           from endstone_voicecraft import VoiceCraftEndstone
+          from endstone_voicecraft.auto_bind import VoiceCraftEndstone as AutoBindVoiceCraftEndstone
           from endstone_voicecraft.compat import CompatibleEndstoneRelayClient
           from endstone_voicecraft.listener import VoiceCraftListener
           from endstone_voicecraft.model import PlayerState
@@ -59,8 +61,18 @@ jobs:
           sentinel = PlayerState("Test", "1", "u", "Overworld", 0.0, 32768.0, 0.0, 0.0, 0.0)
           assert VoiceCraftEndstone._valid_state(valid)
           assert not VoiceCraftEndstone._valid_state(sentinel)
-          assert VoiceCraftEndstone.version == "0.2.1"
+          assert VoiceCraftEndstone is AutoBindVoiceCraftEndstone
+          assert VoiceCraftEndstone.version == "0.2.2"
           assert CompatibleEndstoneRelayClient is not None
+          assert ModalForm is not None and TextInput is not None
+
+          extract = VoiceCraftEndstone._extract_binding_key
+          assert extract(["Ab3X9"]) == "Ab3X9"
+          assert extract('["Ab3X9"]') == "Ab3X9"
+          assert extract({"bindingKey": " Ab3X9 "}) == "Ab3X9"
+          assert extract("") == ""
+          assert VoiceCraftEndstone._AUTO_FORM_DELAY_TICKS >= 1
+          assert VoiceCraftEndstone._AUTO_FORM_RETRY_TICKS >= 1
 
           good = (True, "wss://voicecraft-server-mobile.onrender.com/bridge", "mcsv-main", "0123456789abcdef0123456789abcdef")
           ok, reason = VoiceCraftEndstone._validate_bridge_config(*good)
@@ -71,14 +83,14 @@ jobs:
           assert not VoiceCraftEndstone._validate_bridge_config(True, "wss://host/bridge", "mcsv-main", "short")[0]
           assert not VoiceCraftEndstone._validate_bridge_config(True, "wss://host/bridge", "x" * 101, "0123456789abcdef")[0]
           assert not VoiceCraftEndstone._validate_bridge_config(True, "wss://YOUR-RELAY.onrender.com/bridge", "mcsv-main", "0123456789abcdef")[0]
-          print("Endstone 0.2.1 annotations, spawn filter, and bridge validation OK")
+          print("Endstone 0.2.2 API, auto-bind form, spawn filter, and bridge validation OK")
           PY
 
       - name: Install Render relay dependencies
         working-directory: VoiceCraft.Bridge.Relay
         run: npm install --omit=dev
 
-      - name: Run real Endstone 0.2.1 / Render relay protocol contract
+      - name: Run real Endstone protocol-1 / Render relay contract
         env:
           PYTHONPATH: VoiceCraft.Endstone/src
         run: python VoiceCraft.Endstone/tests/relay_contract_021.py
@@ -96,18 +108,19 @@ jobs:
           import zipfile
 
           wheel = glob.glob("dist/*.whl")[0]
-          assert "0.2.1" in wheel, wheel
+          assert "0.2.2" in wheel, wheel
           with zipfile.ZipFile(wheel) as zf:
               names = set(zf.namelist())
               assert "endstone_voicecraft/config.toml" in names, names
               assert "endstone_voicecraft/bridge.py" in names, names
               assert "endstone_voicecraft/compat.py" in names, names
+              assert "endstone_voicecraft/auto_bind.py" in names, names
               assert "endstone_voicecraft/plugin.py" in names, names
 
               metadata = [name for name in names if name.endswith(".dist-info/METADATA")]
               assert metadata, names
               metadata_text = zf.read(metadata[0]).decode("utf-8")
-              assert "Version: 0.2.1" in metadata_text, metadata_text
+              assert "Version: 0.2.2" in metadata_text, metadata_text
 
               entry = [name for name in names if name.endswith(".dist-info/entry_points.txt")]
               assert entry, names
@@ -120,16 +133,19 @@ jobs:
           python - <<'PY'
           import inspect
           from endstone.event import PlayerJoinEvent, PlayerQuitEvent
+          from endstone.form import ModalForm, TextInput
           from endstone_voicecraft import VoiceCraftEndstone
           from endstone_voicecraft.compat import CompatibleEndstoneRelayClient
           from endstone_voicecraft.listener import VoiceCraftListener
 
           assert VoiceCraftEndstone.api_version == "0.11"
-          assert VoiceCraftEndstone.version == "0.2.1"
+          assert VoiceCraftEndstone.version == "0.2.2"
           assert inspect.signature(VoiceCraftListener.on_player_join).parameters["event"].annotation is PlayerJoinEvent
           assert inspect.signature(VoiceCraftListener.on_player_quit).parameters["event"].annotation is PlayerQuitEvent
           assert CompatibleEndstoneRelayClient is not None
-          print("Endstone 0.2.1 installed wheel import and entrypoint OK")
+          assert ModalForm is not None and TextInput is not None
+          assert VoiceCraftEndstone._extract_binding_key('["Ab3X9"]') == "Ab3X9"
+          print("Endstone 0.2.2 installed wheel import and auto-bind entrypoint OK")
           PY
 
       - name: Upload Endstone wheel
