@@ -1,5 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android" android:installLocation="auto">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+          xmlns:tools="http://schemas.android.com/tools"
+          android:installLocation="auto">
   <uses-permission android:name="android.permission.INTERNET" />
   <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
   <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
@@ -12,6 +14,13 @@
     android:allowBackup="false"
     android:supportsRtl="true"
     android:usesCleartextTraffic="true">
+    <!-- MainActivity is kept compiled as the UI3 fallback/reference, but it is
+         disabled so Android exposes only the new ModernMainActivity launcher. -->
+    <activity
+      android:name="chat.voicecraft.server.MainActivity"
+      android:enabled="false"
+      tools:replace="android:enabled" />
+
     <service
       android:name="chat.voicecraft.server.VoiceCraftServerService"
       android:exported="false"
