@@ -3,7 +3,18 @@ name: Build Android APK
 on:
   workflow_dispatch:
   push:
-    branches: [main, endstone-phase2, modern-azure-ui]
+    branches: [main, endstone-phase2, modern-azure-ui, android-ui4.2-endstone-0.2.3]
+    paths:
+      - "VoiceCraft.Upstream"
+      - "VoiceCraft.Server.Android/**"
+      - "tools/apply_phase1.py"
+      - "tools/apply_android_console_fix.py"
+      - "tools/apply_android_tcp_mchttp.py"
+      - "tools/apply_bridge_runtime.py"
+      - ".github/workflows/build-android.yml"
+      - ".gitmodules"
+  pull_request:
+    branches: [main]
     paths:
       - "VoiceCraft.Upstream"
       - "VoiceCraft.Server.Android/**"
@@ -78,6 +89,6 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: VoiceCraft-Server-Android-arm64-Phase2
+          name: VoiceCraft-Server-Android-arm64-UI4.2
           if-no-files-found: error
           path: VoiceCraft.Server.Android/bin/Release/net10.0-android/android-arm64/publish/*.apk
