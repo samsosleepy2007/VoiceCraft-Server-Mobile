@@ -11,6 +11,8 @@ max_key_length = 128
 
 [bridge]
 # Enable after deploying VoiceCraft.Bridge.Relay to Render.
+# UI4.1 Copy Plugin Config generates compatible values.
+# URL path must be exactly /bridge; server_id <= 100 chars; secret >= 16 chars.
 enabled = false
 url = "wss://YOUR-RELAY.onrender.com/bridge"
 server_id = "mcsv-main"

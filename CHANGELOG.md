@@ -4,6 +4,32 @@ All notable changes to VoiceCraft Server Mobile are recorded here.
 
 The project keeps VoiceCraft upstream pinned to **v1.7.1** while evolving the Android host, Endstone integration, Render relay and user interface around it.
 
+## 2026-09-07 — Endstone 0.2.1 / Android UI4.1 companion release
+
+Endstone plugin: `0.2.1`  
+Companion Android release: `1.7.1-android-phase2-ui4.1` (version code `7`)  
+Relay protocol: `1`
+
+### Added / hardened
+
+- Added strict bridge configuration validation before opening the Endstone WSS client.
+- Relay URL must use `ws://` or `wss://`, include a hostname, use path exactly `/bridge`, and contain no parameters/query/fragment.
+- Server ID must be non-empty and at most 100 characters.
+- Bridge Secret must be at least 16 characters and placeholder values are rejected.
+- Endstone relay hello now advertises `pluginVersion = 0.2.1`.
+- Added reconnect-attempt, reconnect-success, WebSocket close-code and transport-error diagnostics without printing the Bridge Secret or binding keys.
+- `/vcunbind` wording now explicitly states that it only cancels a pending bind request and does not unbind an already-bound VoiceCraft entity.
+
+### Verification
+
+- Added a real Endstone 0.2.1 ↔ Node Render Relay protocol contract test.
+- Verified Endstone authentication / `hello_ok`, Android mock authentication, `peer_status`, `player_state`, `request_snapshot`, `bind`, `bind_result`, Server-ID room isolation, bad-secret rejection with close code `4403`, relay restart, automatic reconnect, and forwarding after reconnect.
+- CI verifies Endstone `0.11.10` event-handler annotations, the BDS pre-spawn `Y=32768` filter, package metadata, Endstone entry point, bundled `config.toml`, and installed-wheel import.
+- Verified wheel name: `endstone_voicecraft-0.2.1-py3-none-any.whl`.
+- No Android wire-protocol change is required; UI4.1 remains compatible with protocol `1`.
+
+---
+
 ## 2026-09-07 — Android UI4.1 interaction hotfix
 
 Version: `1.7.1-android-phase2-ui4.1`  
