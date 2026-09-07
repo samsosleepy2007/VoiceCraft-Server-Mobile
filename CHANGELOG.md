@@ -4,6 +4,30 @@ All notable changes to VoiceCraft Server Mobile are recorded here.
 
 The project keeps VoiceCraft upstream pinned to **v1.7.1** while evolving the Android host, Endstone integration, Render relay and user interface around it.
 
+## 2026-09-08 — Android UI4.2 + Endstone 0.2.3
+
+Android version: `1.7.1-android-phase2-ui4.2` (version code `8`)  
+Endstone plugin: `0.2.3`  
+Relay protocol: `1`
+
+### Added
+
+- Live Android dashboard for Minecraft players, bound/unbound status, entity ID, dimension and position.
+- Android `Request Snapshot` action for a fresh Endstone state snapshot.
+- Android detects destruction of an already-bound VoiceCraft client entity while its Minecraft player remains online.
+- New additive protocol-1 `voice_client_disconnected` control message forwarded through Render.
+- Endstone shows a red disconnect warning immediately and reopens the Binding Key form after 5 seconds.
+- Duplicate disconnect events are suppressed and manual binding/player quit cancels unnecessary rebind UI.
+
+### Preserved
+
+- VoiceCraft v1.7.1 wire protocol and direct LiteNetLib UDP voice path.
+- Render remains control plane only.
+- Auto Bind UI on initial join from Endstone 0.2.2.
+- Binding Keys and Bridge Secret remain hidden from logs/dashboard.
+
+---
+
 ## 2026-09-07 — Endstone 0.2.1 / Android UI4.1 companion release
 
 Endstone plugin: `0.2.1`  

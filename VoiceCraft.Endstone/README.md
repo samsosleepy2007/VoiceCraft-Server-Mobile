@@ -186,3 +186,13 @@ The wheel build additionally verifies Endstone 0.11.10 event annotations, the pr
 ## Current network boundary
 
 Phase 2 solves the **Minecraft state + binding path** across the Internet. It does not expose Android's VoiceCraft UDP voice port publicly. A public UDP endpoint/relay remains a separate networking phase.
+
+
+## Endstone 0.2.3
+
+- Keeps the automatic join-time bind form from 0.2.2.
+- Receives `voice_client_disconnected` from Android when a bound VoiceCraft entity disappears while the Minecraft player remains online.
+- Sends a red in-game warning immediately, waits 5 seconds, then opens the same Binding Key form again.
+- Duplicate disconnect notifications are suppressed while the rebind timer is active.
+- If the player leaves or binds manually before the timer expires, the form is not reopened unnecessarily.
+- Render Relay protocol remains `1`; the new message is additive.

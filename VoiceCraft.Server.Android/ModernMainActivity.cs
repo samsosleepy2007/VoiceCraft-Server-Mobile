@@ -60,6 +60,9 @@ public sealed class ModernMainActivity : Activity
     private TextView? _statusBadge;
     private TextView? _address;
     private TextView? _clientCount;
+    private TextView? _minecraftCount;
+    private TextView? _boundCount;
+    private TextView? _playerList;
     private TextView? _bridgeState;
     private TextView? _relaySummary;
     private LinearLayout? _errorCard;
@@ -281,6 +284,12 @@ public sealed class ModernMainActivity : Activity
         metrics.AddView(MetricCard("0", T("Voice Clients", "Voice clients"), out _clientCount), Weight());
         metrics.AddView(MetricCard(T("ออฟไลน์", "OFFLINE"), T("บริดจ์", "Bridge"), out _bridgeState), Weight());
         hero.AddView(metrics);
+
+        var playerMetrics = new LinearLayout(this) { Orientation = Orientation.Horizontal };
+        playerMetrics.SetPadding(0, Dp(8), 0, 0);
+        playerMetrics.AddView(MetricCard("0", T("ผู้เล่น Minecraft", "Minecraft players"), out _minecraftCount), Weight());
+        playerMetrics.AddView(MetricCard("0", T("Bind แล้ว", "Bound"), out _boundCount), Weight());
+        hero.AddView(playerMetrics);
         body.AddView(hero, CardLayout());
 
         _errorCard = Card(DangerFill, Red);
@@ -320,6 +329,27 @@ public sealed class ModernMainActivity : Activity
         AddButton(bridgeButtons, "PLUGIN CONFIG", CopyPluginConfig);
         bridge.AddView(bridgeButtons);
         body.AddView(bridge, CardLayout());
+
+        var players = Card();
+        players.AddView(SectionTitle(T("ผู้เล่นและสถานะ Bind", "Players & Binding"), Primary2));
+        players.AddView(Label(T("ข้อมูลมาจาก Endstone ผ่าน Render Relay และไม่แสดง Binding Key", "Live state comes from Endstone through Render Relay; binding keys are never shown here"), 12, Muted));
+        _playerList = Label(T("ยังไม่มีผู้เล่น Minecraft ที่ติดตาม", "No tracked Minecraft players yet"), 12, Ink);
+        _playerList.SetPadding(0, Dp(10), 0, 0);
+        _playerList.SetTextIsSelectable(true);
+        players.AddView(_playerList);
+        var playerButtons = ButtonRow();
+        AddButton(playerButtons, T("ขอ Snapshot", "REQUEST SNAPSHOT"), () =>
+        {
+            var queued = VoiceCraftServerService.RequestBridgeSnapshot();
+            Toast.MakeText(
+                this,
+                queued ? T("ขอข้อมูลผู้เล่นล่าสุดแล้ว", "Fresh player snapshot requested") : T("Bridge ยังไม่ทำงาน", "Bridge is not running"),
+                ToastLength.Short)?.Show();
+            RefreshUi();
+        }, primary: true);
+        AddButton(playerButtons, T("รีเฟรช", "REFRESH"), RefreshUi);
+        players.AddView(playerButtons);
+        body.AddView(players, CardLayout());
 
         var control = Card(Tint, Border);
         control.AddView(SectionTitle(T("ควบคุมเซิร์ฟเวอร์", "Server Control"), Primary));
@@ -1109,6 +1139,44 @@ public sealed class ModernMainActivity : Activity
             _address.Text = $"{ip}:{port}";
         if (_clientCount != null)
             _clientCount.Text = VcServerApp.ConnectedClients.ToString();
+
+        var dashboard = VoiceCraftServerService.BridgeDashboard;
+        if (_minecraftCount != null)
+            _minecraftCount.Text = dashboard.MinecraftPlayers.ToString();
+        if (_boundCount != null)
+            _boundCount.Text = dashboard.BoundPlayers.ToString();
+        if (_playerList != null)
+        {
+            if (dashboard.Players.Count == 0)
+            {
+                _playerList.Text = T("ยังไม่มีผู้เล่น Minecraft ที่ติดตาม", "No tracked Minecraft players yet");
+                _playerList.SetTextColor(Muted);
+            }
+            else
+            {
+                var rows = dashboard.Players.Take(20).Select(player =>
+                {
+                    var binding = player.Bound
+                        ? $"{T("Bind แล้ว", "BOUND")} • Entity #{player.EntityId}"
+                        : T("ยังไม่ Bind", "NOT BOUND");
+                    return $"{player.Name}
+{binding}
+{player.Dimension} • {player.X:0.0}, {player.Y:0.0}, {player.Z:0.0}";
+                });
+                var suffix = dashboard.Players.Count > 20
+                    ? T($"
+
+และอีก {dashboard.Players.Count - 20} คน", $"
+
++ {dashboard.Players.Count - 20} more")
+                    : string.Empty;
+                _playerList.Text = string.Join("
+
+", rows) + suffix;
+                _playerList.SetTextColor(Ink);
+            }
+        }
+
         if (_bridgeState != null)
             _bridgeState.Text = ShortBridge(VoiceCraftServerService.BridgeStatus);
         if (_relaySummary != null)

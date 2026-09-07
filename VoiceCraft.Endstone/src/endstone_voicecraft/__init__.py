@@ -1,3 +1,3 @@
-from .auto_bind import VoiceCraftEndstone
+from .auto_rebind import VoiceCraftEndstone
 
 __all__ = ["VoiceCraftEndstone"]

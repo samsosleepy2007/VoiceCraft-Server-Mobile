@@ -12,6 +12,27 @@ using VcServerApp = VoiceCraft.Server.App;
 
 namespace VoiceCraft.Server.Android;
 
+internal sealed record BridgeDashboardPlayer(
+    string Name,
+    string Xuid,
+    string Uuid,
+    string Dimension,
+    float X,
+    float Y,
+    float Z,
+    bool Bound,
+    int? EntityId);
+
+internal sealed record BridgeDashboardSnapshot(
+    int MinecraftPlayers,
+    int BoundPlayers,
+    int UnboundPlayers,
+    IReadOnlyList<BridgeDashboardPlayer> Players)
+{
+    public static BridgeDashboardSnapshot Empty { get; } =
+        new(0, 0, 0, Array.Empty<BridgeDashboardPlayer>());
+}
+
 internal sealed class EndstoneBridgeController : IAsyncDisposable
 {
     private const string BindingAlphabet = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
@@ -25,6 +46,7 @@ internal sealed class EndstoneBridgeController : IAsyncDisposable
     private readonly Dictionary<int, string> _keyByEntity = new();
     private readonly Dictionary<string, int> _boundByPlayer = new(StringComparer.Ordinal);
     private readonly Dictionary<int, string> _playerByEntity = new();
+    private volatile BridgeDashboardSnapshot _dashboardSnapshot = BridgeDashboardSnapshot.Empty;
     private Task? _runTask;
     private Task? _attachTask;
     private VoiceCraftWorld? _world;
@@ -33,6 +55,7 @@ internal sealed class EndstoneBridgeController : IAsyncDisposable
     public bool RelayConnected { get; private set; }
     public bool EndstoneConnected { get; private set; }
     public string LastError { get; private set; } = string.Empty;
+    public BridgeDashboardSnapshot DashboardSnapshot => _dashboardSnapshot;
 
     public string Status => !RelayConnected
         ? "relay-disconnected"
@@ -49,9 +72,19 @@ internal sealed class EndstoneBridgeController : IAsyncDisposable
     {
         if (_runTask is not null)
             return;
-        AndroidRuntimeLog.Append("BRIDGE", $"Phase 2 starting relay={SafeEndpoint(_relayUri)} server_id={_serverId}; secret hidden");
+        AndroidRuntimeLog.Append("BRIDGE", $"Phase 2 UI4.2 starting relay={SafeEndpoint(_relayUri)} server_id={_serverId}; secret hidden");
         _attachTask = Task.Run(() => AttachRuntimeAsync(_cts.Token));
         _runTask = Task.Run(() => RunRelayAsync(_cts.Token));
+    }
+
+    public void RequestSnapshot()
+    {
+        QueueOutgoing(new
+        {
+            type = "request_snapshot",
+            reason = "android-ui4.2"
+        });
+        AndroidRuntimeLog.Append("BRIDGE", "Requested fresh Endstone player snapshot");
     }
 
     private async Task AttachRuntimeAsync(CancellationToken token)
@@ -130,10 +163,33 @@ internal sealed class EndstoneBridgeController : IAsyncDisposable
         if (_keyByEntity.Remove(entity.Id, out var key))
             _unboundByKey.Remove(key);
 
+        BridgePlayerState? disconnectedPlayer = null;
         if (_playerByEntity.Remove(entity.Id, out var playerKey))
+        {
             _boundByPlayer.Remove(playerKey);
+            _latestStates.TryGetValue(playerKey, out disconnectedPlayer);
+        }
 
-        AndroidRuntimeLog.Append("BRIDGE", $"Voice client entity={entity.Id} removed from Endstone binding table");
+        if (disconnectedPlayer is not null)
+        {
+            QueueOutgoing(new
+            {
+                type = "voice_client_disconnected",
+                xuid = disconnectedPlayer.Xuid,
+                uuid = disconnectedPlayer.Uuid,
+                name = disconnectedPlayer.Name,
+                entityId = entity.Id
+            });
+            AndroidRuntimeLog.Append(
+                "BRIDGE",
+                $"Voice client disconnected while Minecraft player={disconnectedPlayer.Name} remains online; rebind requested entity={entity.Id}");
+        }
+        else
+        {
+            AndroidRuntimeLog.Append("BRIDGE", $"Voice client entity={entity.Id} removed from Endstone binding table");
+        }
+
+        RefreshDashboardSnapshot();
     }
 
     private void AssignBindingKey(VoiceCraftNetworkEntity entity)
@@ -160,16 +216,21 @@ internal sealed class EndstoneBridgeController : IAsyncDisposable
     {
         _latestStates[state.PlayerKey] = state;
         if (!_boundByPlayer.TryGetValue(state.PlayerKey, out var entityId))
+        {
+            RefreshDashboardSnapshot();
             return;
+        }
 
         if (_world?.GetEntity(entityId) is not VoiceCraftNetworkEntity entity || entity.Destroyed)
         {
             _boundByPlayer.Remove(state.PlayerKey);
             _playerByEntity.Remove(entityId);
+            RefreshDashboardSnapshot();
             return;
         }
 
         ApplyStateToEntity(entity, state);
+        RefreshDashboardSnapshot();
     }
 
     private void ApplyStateToEntity(VoiceCraftNetworkEntity entity, BridgePlayerState state)
@@ -226,6 +287,7 @@ internal sealed class EndstoneBridgeController : IAsyncDisposable
         AndroidRuntimeLog.Append(
             "BRIDGE",
             $"BIND success player={state.Name} xuid={state.Xuid} entity={entityId} request={ShortId(request.RequestId)}");
+        RefreshDashboardSnapshot();
         SendBindResult(request, true, string.Empty, entityId);
     }
 
@@ -233,11 +295,17 @@ internal sealed class EndstoneBridgeController : IAsyncDisposable
     {
         _latestStates.TryRemove(playerKey, out _);
         if (!_boundByPlayer.Remove(playerKey, out var entityId))
+        {
+            RefreshDashboardSnapshot();
             return;
+        }
 
         _playerByEntity.Remove(entityId);
         if (_world?.GetEntity(entityId) is not VoiceCraftNetworkEntity entity || entity.Destroyed)
+        {
+            RefreshDashboardSnapshot();
             return;
+        }
 
         entity.Name = "New Client";
         entity.WorldId = string.Empty;
@@ -245,6 +313,7 @@ internal sealed class EndstoneBridgeController : IAsyncDisposable
         entity.Rotation = Vector2.Zero;
         AssignBindingKey(entity);
         AndroidRuntimeLog.Append("BRIDGE", $"UNBIND player={name} entity={entityId}; new key assigned");
+        RefreshDashboardSnapshot();
     }
 
     private void SendBindResult(BridgeBindRequest request, bool success, string reason, int? entityId = null)
@@ -424,6 +493,33 @@ internal sealed class EndstoneBridgeController : IAsyncDisposable
                 AndroidRuntimeLog.Append("BRIDGE", $"Endstone state sync received cached_players={_latestStates.Count}");
                 break;
         }
+    }
+
+    private void RefreshDashboardSnapshot()
+    {
+        var players = _latestStates.Values
+            .OrderBy(state => state.Name, StringComparer.OrdinalIgnoreCase)
+            .Select(state =>
+            {
+                var bound = _boundByPlayer.TryGetValue(state.PlayerKey, out var entityId);
+                return new BridgeDashboardPlayer(
+                    state.Name,
+                    state.Xuid,
+                    state.Uuid,
+                    state.Dimension,
+                    state.X,
+                    state.Y,
+                    state.Z,
+                    bound,
+                    bound ? entityId : null);
+            })
+            .ToArray();
+        var boundPlayers = players.Count(player => player.Bound);
+        _dashboardSnapshot = new BridgeDashboardSnapshot(
+            players.Length,
+            boundPlayers,
+            players.Length - boundPlayers,
+            players);
     }
 
     private void QueueOutgoing(object payload)

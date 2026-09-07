@@ -118,6 +118,7 @@ function forwardAndroid(serverId, room, message) {
     case "request_snapshot":
     case "server_status":
     case "entity_key":
+    case "voice_client_disconnected":
       sendJson(room.endstone, message);
       return;
     default:
