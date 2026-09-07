@@ -1,0 +1,88 @@
+name: Publish UI4.1 Release
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/publish-ui4.1-release.yml"
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  publish:
+    if: github.event.head_commit.message == 'Publish UI4.1 GitHub Release'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download validated Android build artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh run download 34120218463 \
+            --repo "$GITHUB_REPOSITORY" \
+            --name VoiceCraft-Server-Android-arm64-Phase2 \
+            --dir release-files
+          find release-files -maxdepth 2 -type f -print
+
+      - name: Prepare release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          SIGNED="$(find release-files -type f -name '*Signed.apk' | head -n1)"
+          UNSIGNED="$(find release-files -type f -name '*Unsigned.apk' | head -n1)"
+          test -n "$SIGNED"
+          test -n "$UNSIGNED"
+
+          cp "$SIGNED" VoiceCraft-Server-Mobile-1.7.1-phase2-ui4.1-arm64-Signed.apk
+          cp "$UNSIGNED" VoiceCraft-Server-Mobile-1.7.1-phase2-ui4.1-arm64-Unsigned.apk
+          sha256sum \
+            VoiceCraft-Server-Mobile-1.7.1-phase2-ui4.1-arm64-Signed.apk \
+            VoiceCraft-Server-Mobile-1.7.1-phase2-ui4.1-arm64-Unsigned.apk \
+            > SHA256SUMS.txt
+
+          cat > RELEASE_NOTES.md <<'EOF'
+          ## VoiceCraft Server Mobile UI4.1
+
+          Android version: `1.7.1-android-phase2-ui4.1`  
+          Version code: `7`  
+          Release target: `8e66a35e044eb4a97ebf743f8e3fba33f3eb74ec`
+
+          ### Fixed
+          - Fixed the UI4 issue where buttons showed press animation but their actions did not run.
+          - Animation-only Android `Touch` handling now passes events through instead of swallowing native `Click` / `PerformClick()`.
+          - Preserves press scale/fade animation, haptic feedback, and native accessibility/click behavior.
+
+          ### Diagnostics
+          - Native button actions now record `CLICK:` entries in runtime logs.
+          - Unexpected button-action failures are recorded as `ACTION ERROR` and surfaced to the user.
+
+          ### Included UI / setup features
+          - Thai UI by default with Thai / English switching.
+          - Light / dark themes.
+          - Required Render Relay preflight before startup.
+          - Render URL to `wss://.../bridge` generation.
+          - Ready-to-paste Endstone `config.toml` generator.
+          - Red validation highlights and guided missing-setting popup.
+          - Thai-localized logs and error cause/fix diagnostics.
+
+          ### Files
+          - `...-Signed.apk` — recommended for normal installation.
+          - `...-Unsigned.apk` — provided for custom signing workflows.
+          - `SHA256SUMS.txt` — checksums for both APKs.
+
+          > Current limitation: Render WSS carries Minecraft state/binding only. Voice audio still uses direct LiteNetLib UDP to the Android server.
+          EOF
+
+      - name: Create GitHub Release and upload APKs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "v1.7.1-android-phase2-ui4.1" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "8e66a35e044eb4a97ebf743f8e3fba33f3eb74ec" \
+            --title "VoiceCraft Server Mobile UI4.1" \
+            --notes-file RELEASE_NOTES.md \
+            VoiceCraft-Server-Mobile-1.7.1-phase2-ui4.1-arm64-Signed.apk \
+            VoiceCraft-Server-Mobile-1.7.1-phase2-ui4.1-arm64-Unsigned.apk \
+            SHA256SUMS.txt
