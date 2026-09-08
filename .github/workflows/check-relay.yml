@@ -3,7 +3,7 @@ name: Check Bridge Relay
 on:
   workflow_dispatch:
   push:
-    branches: [main, endstone-phase2, android-ui4.2-endstone-0.2.3]
+    branches: [main, endstone-phase2]
     paths:
       - "VoiceCraft.Bridge.Relay/**"
       - "render.yaml"
