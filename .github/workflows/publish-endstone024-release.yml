@@ -1,0 +1,126 @@
+name: Publish Endstone 0.2.4 Release
+
+on:
+  push:
+    branches: [publish-endstone-0.2.4]
+    paths:
+      - ".github/workflows/publish-endstone024-release.yml"
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Download validated Android UI4.2 artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh run download 34182422653 \
+            --repo "$GITHUB_REPOSITORY" \
+            --name VoiceCraft-Server-Android-arm64-UI4.2 \
+            --dir android-artifact
+          find android-artifact -maxdepth 2 -type f -print
+
+      - name: Download validated Endstone 0.2.4 artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh run download 34199566577 \
+            --repo "$GITHUB_REPOSITORY" \
+            --name VoiceCraft-Endstone-Phase2 \
+            --dir endstone-artifact
+          find endstone-artifact -maxdepth 2 -type f -print
+
+      - name: Prepare release assets and checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          SIGNED="$(find android-artifact -type f -name '*Signed.apk' | head -n1)"
+          UNSIGNED="$(find android-artifact -type f -name '*.apk' ! -name '*Signed.apk' | head -n1)"
+          WHEEL="$(find endstone-artifact -type f -name 'endstone_voicecraft-0.2.4-*.whl' | head -n1)"
+
+          test -n "$SIGNED"
+          test -n "$UNSIGNED"
+          test -n "$WHEEL"
+
+          cp "$SIGNED" VoiceCraft-Server-Mobile-1.7.1-phase2-ui4.2-arm64-Signed.apk
+          cp "$UNSIGNED" VoiceCraft-Server-Mobile-1.7.1-phase2-ui4.2-arm64-Unsigned.apk
+          cp "$WHEEL" endstone_voicecraft-0.2.4-py3-none-any.whl
+
+          sha256sum \
+            VoiceCraft-Server-Mobile-1.7.1-phase2-ui4.2-arm64-Signed.apk \
+            VoiceCraft-Server-Mobile-1.7.1-phase2-ui4.2-arm64-Unsigned.apk \
+            endstone_voicecraft-0.2.4-py3-none-any.whl \
+            > SHA256SUMS.txt
+
+          cat SHA256SUMS.txt
+
+      - name: Prepare release notes
+        shell: bash
+        run: |
+          cat > RELEASE_NOTES.md <<'EOF'
+          ## VoiceCraft Server Mobile UI4.2 + Endstone 0.2.4
+
+          Android version: `1.7.1-android-phase2-ui4.2`  
+          Android version code: `8`  
+          Endstone plugin: `0.2.4`  
+          Render relay protocol: `1`
+
+          ### Endstone 0.2.4
+          - Replaces the old public VoiceCraft slash commands with one `/vc` in-game control menu.
+          - **Bind Microphone** opens the existing Binding Key form and secure bind path.
+          - **Cancel Pending Bind** keeps the old pending-request cancellation behavior.
+          - **Status** shows bridge, binding and player state information.
+          - **Tracked Players (Admin)** keeps the operator-only diagnostic view.
+          - Fixes the 0.2.2/0.2.3 command-registration regression caused by Endstone 0.11 reading plugin metadata from the final exported class `__dict__`.
+          - Final plugin metadata is now declared directly on the exported class and CI verifies exactly one public command: `/vc`.
+
+          ### Preserved
+          - Automatic join-time Bind form.
+          - Automatic 5-second Rebind after VoiceCraft client disconnect.
+          - Stale disconnect-event protection and duplicate timer suppression.
+          - Android UI4.2 live Minecraft player/binding dashboard.
+          - Render Relay protocol `1`.
+          - VoiceCraft v1.7.1 wire/audio protocol and direct LiteNetLib UDP voice path.
+
+          ### Validation
+          - PR #11 Endstone build: success.
+          - Main Endstone Build #22: success.
+          - Compile, `/vc` metadata regression guard, Auto Bind/Rebind checks, real protocol-1 relay contract, wheel metadata/entrypoint and installed-wheel validation all passed.
+
+          ### Files
+          - `VoiceCraft-Server-Mobile-1.7.1-phase2-ui4.2-arm64-Signed.apk` — recommended Android install.
+          - `VoiceCraft-Server-Mobile-1.7.1-phase2-ui4.2-arm64-Unsigned.apk` — for custom signing workflows.
+          - `endstone_voicecraft-0.2.4-py3-none-any.whl` — current Endstone companion plugin.
+          - `SHA256SUMS.txt` — SHA-256 checksums for all release binaries.
+          EOF
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="v1.7.1-android-phase2-ui4.2-endstone0.2.4"
+
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $TAG already exists; refusing to overwrite it."
+            exit 1
+          fi
+
+          gh release create "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "d61201e53391ea3c3542e3e6ea807a8e81741a02" \
+            --title "VoiceCraft Server Mobile UI4.2 + Endstone 0.2.4" \
+            --notes-file RELEASE_NOTES.md \
+            VoiceCraft-Server-Mobile-1.7.1-phase2-ui4.2-arm64-Signed.apk \
+            VoiceCraft-Server-Mobile-1.7.1-phase2-ui4.2-arm64-Unsigned.apk \
+            endstone_voicecraft-0.2.4-py3-none-any.whl \
+            SHA256SUMS.txt
