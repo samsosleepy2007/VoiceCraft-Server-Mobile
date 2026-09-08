@@ -42,17 +42,18 @@ jobs:
       - name: Compile plugin source and tests
         run: python -m compileall -q VoiceCraft.Endstone/src VoiceCraft.Endstone/tests
 
-      - name: Validate Endstone API, auto-bind, auto-rebind, spawn filter and bridge config
+      - name: Validate Endstone API, /vc menu, auto-bind, auto-rebind, spawn filter and bridge config
         env:
           PYTHONPATH: VoiceCraft.Endstone/src
         run: |
           python - <<'PY'
           import inspect
           from endstone.event import PlayerJoinEvent, PlayerQuitEvent
-          from endstone.form import ModalForm, TextInput
+          from endstone.form import ActionForm, ModalForm, TextInput
           from endstone_voicecraft import VoiceCraftEndstone
           from endstone_voicecraft.auto_bind import VoiceCraftEndstone as AutoBindVoiceCraftEndstone
           from endstone_voicecraft.auto_rebind import VoiceCraftEndstone as AutoRebindVoiceCraftEndstone
+          from endstone_voicecraft.menu import VoiceCraftEndstone as MenuVoiceCraftEndstone
           from endstone_voicecraft.compat import CompatibleEndstoneRelayClient
           from endstone_voicecraft.listener import VoiceCraftListener
           from endstone_voicecraft.model import PlayerState
@@ -68,11 +69,30 @@ jobs:
           sentinel = PlayerState("Test", "1", "u", "Overworld", 0.0, 32768.0, 0.0, 0.0, 0.0)
           assert VoiceCraftEndstone._valid_state(valid)
           assert not VoiceCraftEndstone._valid_state(sentinel)
-          assert VoiceCraftEndstone is AutoRebindVoiceCraftEndstone
+          assert VoiceCraftEndstone is MenuVoiceCraftEndstone
+          assert issubclass(MenuVoiceCraftEndstone, AutoRebindVoiceCraftEndstone)
           assert issubclass(AutoRebindVoiceCraftEndstone, AutoBindVoiceCraftEndstone)
-          assert VoiceCraftEndstone.version == "0.2.3"
+          assert VoiceCraftEndstone.version == "0.2.4"
           assert CompatibleEndstoneRelayClient is not None
-          assert ModalForm is not None and TextInput is not None
+          assert ActionForm is not None and ModalForm is not None and TextInput is not None
+
+          # Regression guard: Endstone 0.11 builds PluginDescription from
+          # cls.__dict__, not inherited class attributes. The final exported
+          # class must therefore own all command/permission metadata directly.
+          direct = VoiceCraftEndstone.__dict__
+          assert direct["api_version"] == "0.11"
+          assert set(direct["commands"]) == {"vc"}, direct["commands"]
+          assert direct["commands"]["vc"]["usages"] == ["/vc"]
+          assert direct["commands"]["vc"]["permissions"] == ["voicecraft.command.menu"]
+          assert "permissions" in direct
+          assert direct["permissions"]["voicecraft.command.menu"]["default"] is True
+          assert direct["permissions"]["voicecraft.command.bind"]["default"] is True
+          assert direct["permissions"]["voicecraft.command.status"]["default"] is True
+          assert direct["permissions"]["voicecraft.command.dump"]["default"] == "op"
+          assert "vcbind" not in direct["commands"]
+          assert "vcunbind" not in direct["commands"]
+          assert "vcstatus" not in direct["commands"]
+          assert "vcdump" not in direct["commands"]
 
           extract = VoiceCraftEndstone._extract_binding_key
           assert extract(["Ab3X9"]) == "Ab3X9"
@@ -92,7 +112,7 @@ jobs:
           assert not VoiceCraftEndstone._validate_bridge_config(True, "wss://host/bridge", "mcsv-main", "short")[0]
           assert not VoiceCraftEndstone._validate_bridge_config(True, "wss://host/bridge", "x" * 101, "0123456789abcdef")[0]
           assert not VoiceCraftEndstone._validate_bridge_config(True, "wss://YOUR-RELAY.onrender.com/bridge", "mcsv-main", "0123456789abcdef")[0]
-          print("Endstone 0.2.3 API, auto-bind/rebind, spawn filter, and bridge validation OK")
+          print("Endstone 0.2.4 /vc menu metadata, auto-bind/rebind, spawn filter, and bridge validation OK")
           PY
 
       - name: Install Render relay dependencies
@@ -117,7 +137,7 @@ jobs:
           import zipfile
 
           wheel = glob.glob("dist/*.whl")[0]
-          assert "0.2.3" in wheel, wheel
+          assert "0.2.4" in wheel, wheel
           with zipfile.ZipFile(wheel) as zf:
               names = set(zf.namelist())
               assert "endstone_voicecraft/config.toml" in names, names
@@ -125,12 +145,13 @@ jobs:
               assert "endstone_voicecraft/compat.py" in names, names
               assert "endstone_voicecraft/auto_bind.py" in names, names
               assert "endstone_voicecraft/auto_rebind.py" in names, names
+              assert "endstone_voicecraft/menu.py" in names, names
               assert "endstone_voicecraft/plugin.py" in names, names
 
               metadata = [name for name in names if name.endswith(".dist-info/METADATA")]
               assert metadata, names
               metadata_text = zf.read(metadata[0]).decode("utf-8")
-              assert "Version: 0.2.3" in metadata_text, metadata_text
+              assert "Version: 0.2.4" in metadata_text, metadata_text
 
               entry = [name for name in names if name.endswith(".dist-info/entry_points.txt")]
               assert entry, names
@@ -143,22 +164,26 @@ jobs:
           python - <<'PY'
           import inspect
           from endstone.event import PlayerJoinEvent, PlayerQuitEvent
-          from endstone.form import ModalForm, TextInput
+          from endstone.form import ActionForm, ModalForm, TextInput
           from endstone_voicecraft import VoiceCraftEndstone
           from endstone_voicecraft.auto_rebind import VoiceCraftEndstone as AutoRebindVoiceCraftEndstone
+          from endstone_voicecraft.menu import VoiceCraftEndstone as MenuVoiceCraftEndstone
           from endstone_voicecraft.compat import CompatibleEndstoneRelayClient
           from endstone_voicecraft.listener import VoiceCraftListener
 
+          assert VoiceCraftEndstone is MenuVoiceCraftEndstone
+          assert issubclass(VoiceCraftEndstone, AutoRebindVoiceCraftEndstone)
           assert VoiceCraftEndstone.api_version == "0.11"
-          assert VoiceCraftEndstone is AutoRebindVoiceCraftEndstone
-          assert VoiceCraftEndstone.version == "0.2.3"
+          assert VoiceCraftEndstone.version == "0.2.4"
+          assert set(VoiceCraftEndstone.__dict__["commands"]) == {"vc"}
+          assert "permissions" in VoiceCraftEndstone.__dict__
           assert inspect.signature(VoiceCraftListener.on_player_join).parameters["event"].annotation is PlayerJoinEvent
           assert inspect.signature(VoiceCraftListener.on_player_quit).parameters["event"].annotation is PlayerQuitEvent
           assert CompatibleEndstoneRelayClient is not None
-          assert ModalForm is not None and TextInput is not None
+          assert ActionForm is not None and ModalForm is not None and TextInput is not None
           assert VoiceCraftEndstone._extract_binding_key('["Ab3X9"]') == "Ab3X9"
           assert VoiceCraftEndstone._RECONNECT_FORM_DELAY_TICKS == 100
-          print("Endstone 0.2.3 installed wheel import and auto-rebind entrypoint OK")
+          print("Endstone 0.2.4 installed wheel import, /vc metadata and auto-rebind entrypoint OK")
           PY
 
       - name: Upload Endstone wheel
