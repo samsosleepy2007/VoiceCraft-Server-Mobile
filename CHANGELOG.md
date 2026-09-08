@@ -4,6 +4,52 @@ All notable changes to VoiceCraft Server Mobile are recorded here.
 
 The project keeps VoiceCraft upstream pinned to **v1.7.1** while evolving the Android host, Endstone integration, Render relay and user interface around it.
 
+## 2026-09-08 — Endstone 0.2.4 `/vc` control menu
+
+Android companion: `1.7.1-android-phase2-ui4.2` (version code `8`)  
+Endstone plugin: `0.2.4`  
+Relay protocol: `1`
+
+### Added
+
+- Replaced the four public VoiceCraft slash commands with one player-facing `/vc` command.
+- `/vc` opens an Endstone `ActionForm` containing:
+  - **Bind Microphone** — opens the Binding Key `ModalForm` and reuses the existing secure bind path.
+  - **Cancel Pending Bind** — preserves the old pending-bind cancellation behavior.
+  - **Status** — shows relay, binding, dimension, position and tracker state.
+  - **Tracked Players (Admin)** — preserves the old operator-only tracked-state view.
+- Added direct plugin metadata on the final exported 0.2.4 class.
+- Added CI regression guards that verify Endstone sees exactly one public command: `/vc`.
+
+### Fixed
+
+- Fixed the 0.2.2/0.2.3 command-registration regression where Auto Bind, Auto Rebind and tracking worked but `/vcbind`, `/vcunbind`, `/vcstatus` and `/vcdump` disappeared.
+- Root cause: Endstone 0.11 constructs Python `PluginDescription` from the exported class `__dict__`; the 0.2.2/0.2.3 entry-point subclasses inherited `commands`/`permissions` instead of declaring them directly.
+- 0.2.4 declares `commands`, `permissions`, `api_version`, `prefix`, `description` and `authors` directly on the exported class.
+
+### Changed
+
+- `/vcbind`, `/vcunbind`, `/vcstatus` and `/vcdump` are no longer registered as public slash commands.
+- Their existing internal handlers remain in place and are invoked from the `/vc` UI, avoiding duplicated binding/diagnostic logic.
+
+### Preserved
+
+- Automatic join-time Bind form from 0.2.2.
+- Automatic 5-second Rebind flow from 0.2.3.
+- Stale disconnect-event protection and duplicate rebind suppression.
+- Android UI4.2 compatibility.
+- Render Relay protocol `1`.
+- VoiceCraft v1.7.1 wire/audio protocol.
+- Direct LiteNetLib UDP voice path.
+
+### Verification
+
+- PR #11 Endstone CI passed all steps before merge.
+- Main Endstone Build #22 passed all steps after merge.
+- CI validates Endstone `0.11.10`, `ActionForm`/`ModalForm` availability, final-class metadata ownership, only `/vc` command registration, Auto Bind/Rebind inheritance, strict bridge config, real protocol-1 relay contract, wheel metadata/entrypoint and installed-wheel import.
+
+---
+
 ## 2026-09-08 — Android UI4.2 + Endstone 0.2.3
 
 Android version: `1.7.1-android-phase2-ui4.2` (version code `8`)  
@@ -188,7 +234,7 @@ Android version code: `3`
 
 ### Added
 
-- First modern blue/white Android redesign.
+- First modern blue/white card-based Android redesign.
 - Home / Bridge / Logs / Settings pages.
 - Render Service URL field.
 - Automatic `http(s)` → `ws(s)` conversion with required `/bridge` path.
