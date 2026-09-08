@@ -22,11 +22,13 @@ public sealed class VoiceCraftServerService : Service
     private PowerManager.WakeLock? _wakeLock;
     private Task? _serverTask;
     private EndstoneBridgeController? _bridgeController;
+    private static EndstoneBridgeController? _activeBridgeController;
 
     public static bool IsServiceRunning { get; private set; }
     public static string? LastError { get; private set; }
     public static string BridgeStatus { get; private set; } = "disabled";
     public static string BridgeLastError { get; private set; } = string.Empty;
+    internal static BridgeDashboardSnapshot BridgeDashboard { get; private set; } = BridgeDashboardSnapshot.Empty;
 
     public override IBinder? OnBind(Intent? intent) => null;
 
@@ -77,6 +79,7 @@ public sealed class VoiceCraftServerService : Service
         LastError = null;
         BridgeLastError = string.Empty;
         BridgeStatus = "starting";
+        BridgeDashboard = BridgeDashboardSnapshot.Empty;
         AndroidRuntimeLog.Append("SERVICE", $"Starting foreground server on port {port}");
         AndroidRuntimeLog.Append("SERVICE", $"App data: {FilesDir?.AbsolutePath ?? "(unknown)"}");
         AndroidRuntimeLog.Append(
@@ -149,6 +152,7 @@ public sealed class VoiceCraftServerService : Service
             });
 
             _bridgeController = new EndstoneBridgeController(bridgeUrl, bridgeServerId, bridgeSecret);
+            _activeBridgeController = _bridgeController;
             _bridgeController.Start();
             BridgeStatus = "starting";
 
@@ -164,11 +168,13 @@ public sealed class VoiceCraftServerService : Service
         }
         finally
         {
-            if (_bridgeController is not null)
-            {
-                await _bridgeController.DisposeAsync();
-                _bridgeController = null;
-            }
+            var bridgeController = _bridgeController;
+            if (bridgeController is not null)
+                await bridgeController.DisposeAsync();
+            if (ReferenceEquals(_activeBridgeController, bridgeController))
+                _activeBridgeController = null;
+            _bridgeController = null;
+            BridgeDashboard = BridgeDashboardSnapshot.Empty;
             BridgeStatus = "disabled";
             BridgeLastError = string.Empty;
             ServerConsole.Sink = null;
@@ -178,6 +184,15 @@ public sealed class VoiceCraftServerService : Service
             AndroidRuntimeLog.Append("SERVICE", "Server task stopped");
             StopSelf();
         }
+    }
+
+    internal static bool RequestBridgeSnapshot()
+    {
+        var controller = _activeBridgeController;
+        if (controller is null)
+            return false;
+        controller.RequestSnapshot();
+        return true;
     }
 
     private static async Task ProbeMcHttpTcpAsync(int port)
@@ -226,6 +241,7 @@ public sealed class VoiceCraftServerService : Service
                 {
                     BridgeStatus = _bridgeController.Status;
                     BridgeLastError = _bridgeController.LastError;
+                    BridgeDashboard = _bridgeController.DashboardSnapshot;
                 }
 
                 var thai = IsThai();

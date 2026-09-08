@@ -28,8 +28,10 @@ class CompatibleEndstoneRelayClient(EndstoneRelayClient):
         secret: str,
         reconnect_seconds: float = 5.0,
         max_queue: int = 2048,
+        plugin_version: str = "0.2.1",
     ) -> None:
         super().__init__(logger, url, server_id, secret, reconnect_seconds, max_queue)
+        self._plugin_version = str(plugin_version or "0.2.1")
         self._ever_connected = False
         self._reconnect_attempt = 0
 
@@ -58,7 +60,7 @@ class CompatibleEndstoneRelayClient(EndstoneRelayClient):
                                 "serverId": self._server_id,
                                 "secret": self._secret,
                                 "protocol": 1,
-                                "pluginVersion": "0.2.1",
+                                "pluginVersion": self._plugin_version,
                             }
                         )
 
@@ -219,6 +221,7 @@ class VoiceCraftEndstone(VoiceCraftEndstoneBase):
                 self._bridge_server_id,
                 secret,
                 reconnect_seconds,
+                plugin_version=self.version,
             )
             if usable
             else None

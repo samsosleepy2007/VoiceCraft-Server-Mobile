@@ -2,8 +2,8 @@
 
 Android/mobile host for **VoiceCraft v1.7.1** with an Endstone + Render control-plane bridge for hosted Minecraft Bedrock servers.
 
-Current Android app version: **`1.7.1-android-phase2-ui4.1`** (version code `7`).  
-Current Endstone plugin version: **`0.2.1`**, verified as the companion plugin for the UI4.1 release bundle.
+Current Android app version: **`1.7.1-android-phase2-ui4.2`** (version code `8`).  
+Current Endstone plugin version: **`0.2.3`**, paired with Android UI4.2 and Render Relay protocol 1.
 
 > The VoiceCraft v1.7.1 wire protocol is kept unchanged. `VoiceCraft.Upstream` is pinned to commit `85aaccccbb58adb23e8c87144e8b1c24bf4b2011`.
 
@@ -48,6 +48,8 @@ The Render relay carries **Minecraft player state + binding control data**. Voic
 - Detailed in-app setup guide and Render shortcut
 - Soft modern UI with rounded cards, floating navigation and interaction animations
 - UI4.1 native click-dispatch hotfix so animation-only touch handlers no longer swallow button actions
+- UI4.2 live Minecraft player / binding dashboard with Request Snapshot
+- Automatic 5-second rebind prompt when an already-bound VoiceCraft client disconnects
 
 ## UI4 design refresh
 

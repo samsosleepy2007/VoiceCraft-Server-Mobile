@@ -219,6 +219,20 @@ async def main() -> None:
             assert bind_result.get("success") is True
             assert bind_result.get("entityId") == 7
 
+            await android.send_json(
+                {
+                    "type": "voice_client_disconnected",
+                    "serverId": SERVER_ID,
+                    "xuid": state["xuid"],
+                    "uuid": state["uuid"],
+                    "name": state["name"],
+                    "entityId": 7,
+                }
+            )
+            disconnected = await wait_incoming(client, "voice_client_disconnected")
+            assert disconnected.get("xuid") == state["xuid"]
+            assert disconnected.get("entityId") == 7
+
             other = await connect_role(session, "android", server_id="other-room")
             await recv_type(other, "peer_status")
             await recv_type(other, "sync_begin")
@@ -267,7 +281,7 @@ async def main() -> None:
 
         assert any("BRIDGE connected" in line for _, line in logger.lines)
         assert any("BRIDGE reconnect" in line or "BRIDGE reconnected" in line for _, line in logger.lines)
-        print("VoiceCraft Endstone 0.2.1 / Relay / Android protocol contract OK")
+        print("VoiceCraft Endstone 0.2.3 / Relay / Android protocol-1 contract OK")
     finally:
         client.stop()
         relay.stop()
