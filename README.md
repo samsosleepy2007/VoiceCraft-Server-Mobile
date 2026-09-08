@@ -2,89 +2,86 @@
 
 Android/mobile host for **VoiceCraft v1.7.1** with an Endstone + Render control-plane bridge for hosted Minecraft Bedrock servers.
 
-Current Android app version: **`1.7.1-android-phase2-ui4.2`** (version code `8`).  
-Current Endstone plugin version: **`0.2.3`**, paired with Android UI4.2 and Render Relay protocol 1.
+Current versions:
 
-> The VoiceCraft v1.7.1 wire protocol is kept unchanged. `VoiceCraft.Upstream` is pinned to commit `85aaccccbb58adb23e8c87144e8b1c24bf4b2011`.
+- Android app: **`1.7.1-android-phase2-ui4.2`** (version code `8`)
+- Endstone plugin: **`0.2.4`**
+- Render Relay protocol: **`1`**
+- VoiceCraft upstream: **v1.7.1**, pinned to commit `85aaccccbb58adb23e8c87144e8b1c24bf4b2011`
 
-## What this project contains
+> VoiceCraft v1.7.1 wire/audio protocol remains unchanged.
+
+## Architecture
 
 ```text
 Minecraft Bedrock @ MCSV
         │
         ▼
-Endstone VoiceCraft plugin
+Endstone VoiceCraft 0.2.4
         │ outbound WSS
         ▼
-Render Relay
+Render Relay (protocol 1)
         │ outbound WSS
         ▼
-VoiceCraft Server Mobile (Android)
+VoiceCraft Server Mobile UI4.2
         │
-        ├─ VoiceCraft UDP server
-        ├─ McHttp TCP compatibility transport
+        ├─ VoiceCraft v1.7.1 runtime
+        ├─ LiteNetLib UDP voice server :9050
+        ├─ McHttp TCP compatibility transport :9050
         ├─ player/entity state bridge
-        └─ binding support
+        └─ binding/rebinding support
 ```
 
-The Render relay carries **Minecraft player state + binding control data**. Voice audio still uses VoiceCraft/LiteNetLib UDP directly to the Android server.
+Render carries the **control plane** only: Minecraft player state, binding, snapshots and disconnect/rebind events. Voice audio still uses VoiceCraft/LiteNetLib UDP directly to the Android server.
 
-## Android app highlights
+## Android UI4.2 highlights
 
-- Native .NET 10 Android ARM64 APK
-- Foreground Service + partial wake lock
-- VoiceCraft UDP server, default UDP `9050`
-- Android raw `TcpListener` McHttp compatibility transport, default TCP `9050`
-- Required Render Relay preflight before startup
-- Render Service URL → automatic `wss://.../bridge` conversion
-- Ready-to-paste Endstone `config.toml` generator
-- Copy buttons for IP, port, IP:port, WSS, Bridge Secret, Server Key, plugin config and complete setup
-- Thai UI by default with Thai / English switching
-- Light and dark themes
-- Thai-localized runtime logs
-- Error diagnosis with likely cause and suggested fix
-- Red validation highlights for missing/invalid required setup
-- Setup popup that jumps directly to the field that must be fixed
-- Detailed in-app setup guide and Render shortcut
-- Soft modern UI with rounded cards, floating navigation and interaction animations
-- UI4.1 native click-dispatch hotfix so animation-only touch handlers no longer swallow button actions
-- UI4.2 live Minecraft player / binding dashboard with Request Snapshot
-- Automatic 5-second rebind prompt when an already-bound VoiceCraft client disconnects
+- Native .NET 10 Android ARM64 APK.
+- Foreground Service + partial wake lock.
+- VoiceCraft UDP server, default UDP `9050`.
+- Android raw `TcpListener` McHttp compatibility transport, default TCP `9050`.
+- Required Render Relay preflight before startup.
+- Render Service URL → automatic `wss://.../bridge` conversion.
+- Ready-to-paste Endstone `config.toml` generator.
+- Thai default UI with Thai/English switching.
+- Light and dark themes.
+- Runtime diagnostics and guided error help.
+- Live Minecraft player/binding dashboard.
+- `Request Snapshot` action.
+- Detection of bound VoiceCraft client disconnects.
+- Automatic 5-second Rebind prompt through Endstone.
 
-## UI4 design refresh
+## Endstone 0.2.4
 
-UI4 changes the Android interface toward a soft modern productivity-app style while keeping the blue/white VoiceCraft identity:
+Endstone 0.2.4 fixes the command-registration regression in 0.2.2/0.2.3 and consolidates all player-facing controls under one command:
 
-- softer blue / indigo surfaces and more whitespace
-- larger rounded cards and floating bottom navigation
-- center Start / Stop action in the bottom bar
-- gradient server-status hero card
-- animated page entrance and card motion
-- press scale/fade feedback + haptic feedback on buttons
-- animated focus feedback on inputs
-- status pulse when server state changes
-- improved bridge flow and automatic diagnostic-help cards
-- old UI3 launcher kept compiled only as a disabled fallback/reference
+```text
+/vc
+```
 
-### UI4.1 interaction hotfix
+The `/vc` UI contains:
 
-UI4.1 keeps the UI4 design unchanged and repairs the shared Android button interaction layer.
+- **Bind Microphone** — opens a Binding Key input form.
+- **Cancel Pending Bind** — cancels only a pending bind request.
+- **Status** — shows bridge state, binding state, player position/dimension and tracker counts.
+- **Tracked Players (Admin)** — operator-only tracked state view.
 
-The root cause was the managed `.Touch` event used for press animation. In .NET for Android, listener callbacks that return `bool` expose `EventArgs.Handled`; the generated event starts handled unless explicitly changed. The UI4 animation handler subscribed to `Touch` but did not set `Handled = false`, so the press animation could run while the native `Click` / `PerformClick()` action never fired.
+The old public commands are intentionally no longer registered:
 
-UI4.1 fixes that centrally in `AppButton.cs`:
+```text
+/vcbind
+/vcunbind
+/vcstatus
+/vcdump
+```
 
-- animation touch events explicitly pass through with `Handled = false`
-- Android native `Button` click/accessibility behavior remains the source of truth
-- every native click writes a `CLICK:` diagnostic entry
-- exceptions thrown by a button action are caught at the shared button layer, written as `ACTION ERROR`, and surfaced to the user instead of looking like a dead button
-- existing UI4 scale/fade animation and haptic feedback are preserved
+Their existing internal logic is reused by the UI, so Auto Bind, Auto Rebind and binding security behavior remain compatible with Android UI4.2 and Relay protocol 1.
 
 ## Required setup
 
 ### 1. Deploy the Render relay
 
-Create a Render Web Service from this repository using:
+Create a Render Web Service from this repository:
 
 ```text
 Root Directory: VoiceCraft.Bridge.Relay
@@ -94,60 +91,49 @@ Start Command: npm start
 Health Check Path: /health
 ```
 
-Add the environment variable:
+Add:
 
 ```text
 BRIDGE_SECRET=<strong-random-secret>
 ```
 
-After deployment, Render gives a normal HTTPS service URL such as:
+A normal Render URL such as:
 
 ```text
 https://voicecraft-server-mobile.onrender.com
 ```
 
-Paste that URL into the Android app. The app generates:
+is converted by Android to:
 
 ```text
 wss://voicecraft-server-mobile.onrender.com/bridge
 ```
 
-### 2. Configure the Android app
+### 2. Configure Android
 
 Open **Bridge** and provide:
 
 ```text
 Render Service URL
 Server ID      (default: mcsv-main)
-Bridge Secret  (must match BRIDGE_SECRET on Render)
+Bridge Secret  (must match Render BRIDGE_SECRET)
 ```
 
-The app will not start VoiceCraft Server until these required values and the server port pass validation.
+The Android server will not start until the port and required bridge settings pass validation.
 
-### 3. Install the Endstone plugin
+### 3. Install Endstone 0.2.4
 
-Use Endstone `0.11.x` on the Minecraft Bedrock host and install the verified companion wheel from the UI4.1 GitHub Release:
+Use Endstone `0.11.x` on the Minecraft Bedrock host and install:
 
 ```text
-endstone_voicecraft-0.2.1-py3-none-any.whl
+endstone_voicecraft-0.2.4-py3-none-any.whl
 ```
 
-Plugin 0.2.1 keeps the existing Phase 2 protocol used by Android UI4.1, validates the Render bridge configuration before connecting, and adds reconnect/close diagnostics. CI verifies it against Endstone `0.11.10` and the repository's real Node relay.
+Remove older `endstone_voicecraft-*.whl` files before installing the new wheel.
 
-Start the Minecraft server once, then use **Copy Plugin Config** in the Android app and paste the generated config into the plugin `config.toml`.
+Start the Minecraft server once, then use **Copy Plugin Config** in the Android app and paste the generated TOML into the Endstone plugin `config.toml`.
 
-The generated bridge section looks like:
-
-```toml
-[bridge]
-enabled = true
-url = "wss://your-service.onrender.com/bridge"
-server_id = "mcsv-main"
-secret = "YOUR_SHARED_SECRET"
-reconnect_seconds = 5
-```
-
-The following values must match:
+The required values must match:
 
 ```text
 Render BRIDGE_SECRET = Android Bridge Secret = Endstone bridge.secret
@@ -155,11 +141,11 @@ Android Server ID    = Endstone bridge.server_id
 Android WebSocket    = Endstone bridge.url = wss://<render-service>/bridge
 ```
 
-### 4. Start VoiceCraft Server
+### 4. Start VoiceCraft Server Mobile
 
-Tap **Start Server** on Home or the center button in the bottom navigation.
+Tap **Start Server** in the Android app.
 
-Before anything launches, the app checks:
+Startup validates:
 
 ```text
 Voice / McHttp Port
@@ -169,11 +155,9 @@ Server ID
 Bridge Secret
 ```
 
-If something is missing or invalid, startup is blocked and the app shows exactly what must be fixed and where.
-
 ### 5. Connect VoiceCraft Client
 
-For current LAN testing, connect a compatible VoiceCraft `1.7.x` client to:
+For LAN testing, connect a compatible VoiceCraft `1.7.x` client to:
 
 ```text
 <ANDROID_LAN_IP>:9050
@@ -181,36 +165,73 @@ For current LAN testing, connect a compatible VoiceCraft `1.7.x` client to:
 
 Set positioning to **Server**.
 
-After the VoiceCraft client receives a binding key, bind from Minecraft with:
+When the VoiceCraft client receives a one-use Binding Key, join Minecraft. Endstone automatically opens the Bind form for an unbound player. If needed, run:
 
 ```text
-/vcbind ABC12
+/vc
 ```
 
-Replace `ABC12` with the actual key shown by the VoiceCraft client.
+and choose **Bind Microphone**.
+
+## Binding lifecycle
+
+```text
+VoiceCraft client connects
+        │
+        ▼
+Android creates VoiceCraft entity
+        │
+        ▼
+One-use Binding Key assigned
+        │
+        ▼
+Minecraft player joins
+        │
+        ▼
+Endstone waits for valid spawn state
+        │
+        ▼
+Auto Bind form
+        │
+        ▼
+Bind request → Render → Android
+        │
+        ▼
+Minecraft player ↔ VoiceCraft entity
+```
+
+If the bound VoiceCraft client later disconnects while the Minecraft player remains online:
+
+```text
+Android detects entity destruction
+        │
+        ▼
+voice_client_disconnected
+        │
+        ▼
+Render Relay
+        │
+        ▼
+Endstone warning
+        │
+        ▼
+wait 5 seconds
+        │
+        ▼
+Rebind form
+```
+
+Duplicate/stale disconnect events are suppressed.
 
 ## Repository layout
 
 ```text
 VoiceCraft.Upstream/             pinned VoiceCraft v1.7.1 source
-VoiceCraft.Server.Android/       Android server host + UI
-VoiceCraft.Endstone/             Endstone plugin
+VoiceCraft.Server.Android/       Android server runtime + UI
+VoiceCraft.Endstone/             Endstone companion plugin
 VoiceCraft.Bridge.Relay/         Render Node/WebSocket relay
 tools/                           build-time upstream patches
 .github/workflows/               Android / Endstone / relay CI
-```
-
-## Clone
-
-```bash
-git clone --recurse-submodules https://github.com/samsosleepy2007/VoiceCraft-Server-Mobile.git
-cd VoiceCraft-Server-Mobile
-```
-
-If the repository was cloned without submodules:
-
-```bash
-git submodule update --init --recursive
 ```
 
 ## Build Android locally
@@ -221,8 +242,6 @@ Requirements:
 - .NET Android workload
 - Android SDK / API 36
 - Java 17
-
-The CI build applies the Android runtime patches before publish:
 
 ```bash
 python tools/apply_phase1.py VoiceCraft.Upstream
@@ -241,136 +260,54 @@ APK output:
 VoiceCraft.Server.Android/bin/Release/net10.0-android/android-arm64/publish/*.apk
 ```
 
-The patch scripts modify only the checked-out submodule working tree. Reset it with:
+## Build Endstone locally
 
 ```bash
-git -C VoiceCraft.Upstream reset --hard
-git -C VoiceCraft.Upstream clean -fd
-```
-
-## Build Endstone plugin
-
-From `VoiceCraft.Endstone`:
-
-```bash
+cd VoiceCraft.Endstone
 python -m pip install build
 python -m build --wheel
 ```
 
-The wheel is produced under:
+Output:
 
 ```text
-VoiceCraft.Endstone/dist/
+VoiceCraft.Endstone/dist/endstone_voicecraft-0.2.4-py3-none-any.whl
 ```
 
-## Version history
+## CI coverage
 
-### Endstone 0.2.1 — UI4.1 companion
+The Endstone workflow verifies against Endstone `0.11.10`:
 
-- verified companion wheel for Android `1.7.1-android-phase2-ui4.1`
-- keeps Render Relay protocol `1` and the existing Android Phase 2 message contract
-- strict bridge config validation: `ws://`/`wss://`, hostname, exact `/bridge` path, Server ID up to 100 characters, Bridge Secret at least 16 characters, and no placeholder/query/fragment values
-- advertises `pluginVersion = 0.2.1`
-- improved reconnect-attempt, reconnect-success and WebSocket close diagnostics
-- `/vcunbind` wording now explicitly means “cancel pending bind request”; it does not unbind an already-bound VoiceCraft entity
-- real CI contract test covers authentication, peer status, player state, snapshot request, bind/bind-result, room isolation, bad-secret rejection and reconnect after relay restart
-- wheel CI validates Endstone 0.11.10 annotations, pre-spawn filtering, metadata, entrypoint, bundled config and installed-wheel import
+- event-handler annotations,
+- pre-spawn `Y=32768` filtering,
+- `/vc` metadata declared directly on the exported class,
+- exactly one public VoiceCraft command (`/vc`),
+- `ActionForm`, `ModalForm` and `TextInput`,
+- Auto Bind and Auto Rebind inheritance,
+- strict bridge validation,
+- real Endstone ↔ Node Relay protocol-1 contract,
+- wheel metadata and entry point,
+- installed-wheel import.
 
-### Android UI4.1 — `1.7.1-android-phase2-ui4.1` / code 7
+## Version milestones
 
-- fixed the UI4 bug where every button animated on touch but the actual action could be swallowed before native `Click`
-- explicitly keeps animation-only `.Touch` events non-consuming with `Handled = false`
-- preserves Android native `PerformClick()` behavior for click, sound and accessibility
-- logs successful native click dispatch with `CLICK:` diagnostics
-- catches unexpected button-action exceptions and reports `ACTION ERROR` instead of silently appearing unresponsive
-- keeps the UI4 design, animations, haptics, validation and server logic unchanged
+- **Android UI4.2 + Endstone 0.2.3** — live player/binding dashboard and automatic rebind after VoiceCraft disconnect.
+- **Endstone 0.2.4** — fixes inherited command metadata regression and introduces the single `/vc` control UI.
+- **Endstone 0.2.2** — automatic join-time Binding Key form.
+- **Endstone 0.2.1** — hardened relay validation and reconnect diagnostics.
+- **Phase 2 / Endstone 0.2.0** — Endstone ↔ Render ↔ Android state/binding control plane.
+- **Android Phase 1** — native ARM64 VoiceCraft v1.7.1 server runtime on Android.
 
-### Android UI4 — `1.7.1-android-phase2-ui4` / code 6
+Full history is tracked in [`CHANGELOG.md`](CHANGELOG.md).
 
-- soft productivity-style blue/white interface
-- gradient hero card and floating bottom navigation
-- center Start / Stop action
-- animated page/card entrance
-- button press scale/fade + haptic feedback
-- input focus/status animations
-- diagnostics help card improvements
-- README and release history brought up to date
+## Current limitation / next networking phase
 
-### Android UI3 — `1.7.1-android-phase2-ui3` / code 5
+The current system solves the **Minecraft state + binding control plane** across the Internet.
 
-- Render Relay became mandatory before server startup
-- startup stops before Foreground Service / UDP / TCP if config is incomplete
-- second service-side preflight added for safety
-- guided popup lists missing fields and jumps to the affected page/field
-- red validation highlighting
-- top language/theme/info controls rebuilt to fix touch interaction
-- optional bridge switch removed because Render/Endstone is now part of the required architecture
-
-### Android UI2 — `1.7.1-android-phase2-ui2` / code 4
-
-- Thai became the default UI language
-- Thai / English switching
-- light / dark theme switching with persisted preference
-- `By SamSoSleepy` branding
-- button interaction feedback
-- in-app setup guide
-- Open Render shortcut
-- Thai log localization
-- common runtime/WebSocket/auth/network error diagnosis with cause + suggested fix
-
-### Android UI1 — `1.7.1-android-phase2-modern-ui1` / code 3
-
-- first blue/white card-based Android redesign
-- Home / Bridge / Logs / Settings navigation
-- Render URL → WebSocket `/bridge` generation
-- Bridge Secret generator and show/hide controls
-- quick-copy actions
-- ready-to-paste Endstone config generator
-- setup readiness/status overview
-
-### Phase 2 control plane — Endstone `0.2.0`
-
-- Endstone → Render outbound WSS bridge
-- Render relay authentication, cache, health endpoint and WebSocket forwarding
-- Android outbound WSS controller
-- player state sync: identity, dimension, position and rotation
-- `/vcbind` forwarding
-- one-use 5-character binding keys
-- pre-spawn invalid Y state filtering
-- server-tick `RuntimeDispatcher` so WebSocket callbacks do not mutate the VoiceCraft world from network threads
-- secrets and binding keys hidden from logs
-
-### Endstone Phase 1 — `0.1.0` / `0.1.1`
-
-- Endstone 0.11.x plugin package
-- player join/quit diagnostics
-- XUID / UUID / dimension / position / yaw / pitch tracking
-- `/vcbind`, `/vcunbind`, `/vcstatus`, `/vcdump`
-- scheduler tracking + heartbeat
-- `0.1.1` fixed Endstone event-handler annotations for real Endstone 0.11 runtime validation
-
-### Android Phase 1 / transport stabilization
-
-- initial native Android ARM64 host
-- VoiceCraft v1.7.1 headless runtime in Foreground Service
-- partial wake lock and private app storage
-- Spectre.Console headless compatibility fix
-- Android diagnostics UI/logging
-- Android `HttpListener` replaced with raw `TcpListener` HTTP/1.1 McHttp transport
-- localhost raw TCP probe added
-- cleartext McHttp enabled for Android LAN testing
-- LAN TCP 9050 reachability verified from another device
-
-Full release notes are also tracked in [`CHANGELOG.md`](CHANGELOG.md).
-
-## Current limitation
-
-The Phase 2 Render bridge solves the **Minecraft state/binding control plane** only.
-
-It does **not** provide a public UDP path for VoiceCraft audio. Remote Internet players still need a future UDP relay/tunnel design that preserves separate LiteNetLib peer identities.
+It does **not** yet expose Android's VoiceCraft UDP voice port through CGNAT/mobile networks. Remote Internet players still need the planned public UDP relay/tunnel that preserves separate LiteNetLib peer identities.
 
 ## License / upstream
 
-VoiceCraft upstream is licensed under **GNU GPL v3**. The upstream license is included inside the pinned `VoiceCraft.Upstream` submodule. Changes in this repository are intended to remain GPL-compatible.
+VoiceCraft upstream is licensed under **GNU GPL v3**. The pinned upstream license remains in `VoiceCraft.Upstream` and this derivative project is intended to remain GPL-compatible.
 
 Upstream: https://github.com/AvionBlock/VoiceCraft
