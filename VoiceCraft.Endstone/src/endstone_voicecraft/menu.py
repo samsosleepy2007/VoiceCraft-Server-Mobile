@@ -123,6 +123,15 @@ class VoiceCraftEndstone(VoiceCraftEndstone023):
             return
         player.send_message("ยังไม่ได้ Bind สามารถใช้ /vc เพื่อเปิดเมนู VoiceCraft ได้ทุกเมื่อ")
 
+    def _on_auto_bind_close(self, player: Player) -> None:
+        player_key = self._player_key(player)
+        if player_key in self._bound_players or player_key in self._pending_bind_keys:
+            return
+        player.send_error_message(
+            "คุณยังไม่ได้ Bind จึงไม่สามารถใช้ไมค์ได้ สามารถใช้ /vc เพื่อเปิดเมนู VoiceCraft และ Bind ภายหลังได้"
+        )
+        self.logger.info(f"BIND FORM closed unbound player={player.name} xuid={player.xuid}")
+
     def _menu_unbind(self, player: Player) -> None:
         if not player.has_permission("voicecraft.command.bind"):
             player.send_error_message("You do not have permission to change VoiceCraft binding state.")
