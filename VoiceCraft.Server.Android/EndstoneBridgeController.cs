@@ -36,7 +36,9 @@ internal sealed record BridgeDashboardSnapshot(
 internal sealed class EndstoneBridgeController : IAsyncDisposable
 {
     private const string BindingAlphabet = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
-    private readonly Uri _relayUri;
+    private const int MaxAttemptsPerRelay = 5;
+    private const int PeerTimeoutSeconds = 30;
+    private readonly IReadOnlyList<Uri> _relayUris;
     private readonly string _serverId;
     private readonly string _secret;
     private readonly CancellationTokenSource _cts = new();
@@ -51,6 +53,9 @@ internal sealed class EndstoneBridgeController : IAsyncDisposable
     private Task? _attachTask;
     private VoiceCraftWorld? _world;
     private int _queuedMessages;
+    private int _activeRelayIndex;
+    private int _relayFailures;
+    private DateTimeOffset? _peerMissingSince;
 
     public bool RelayConnected { get; private set; }
     public bool EndstoneConnected { get; private set; }
@@ -61,9 +66,26 @@ internal sealed class EndstoneBridgeController : IAsyncDisposable
         ? "relay-disconnected"
         : EndstoneConnected ? "endstone-connected" : "relay-only";
 
-    public EndstoneBridgeController(string relayUrl, string serverId, string secret)
+    public int RelayCount => _relayUris.Count;
+    public int ActiveRelayIndex => _activeRelayIndex;
+    public string ActiveRelayName => _activeRelayIndex == 0 ? "Primary" : $"Backup #{_activeRelayIndex}";
+    public string ActiveRelayEndpoint => SafeEndpoint(ActiveRelayUri);
+    private Uri ActiveRelayUri => _relayUris[_activeRelayIndex];
+
+    public EndstoneBridgeController(IEnumerable<string> relayUrls, string serverId, string secret)
     {
-        _relayUri = new Uri(relayUrl, UriKind.Absolute);
+        var urls = new List<Uri>();
+        foreach (var raw in relayUrls)
+        {
+            if (!Uri.TryCreate(raw, UriKind.Absolute, out var uri))
+                continue;
+            if (urls.Any(existing => string.Equals(existing.AbsoluteUri, uri.AbsoluteUri, StringComparison.OrdinalIgnoreCase)))
+                continue;
+            urls.Add(uri);
+        }
+        if (urls.Count == 0)
+            throw new ArgumentException("At least one relay URL is required.", nameof(relayUrls));
+        _relayUris = urls;
         _serverId = serverId;
         _secret = secret;
     }
@@ -72,7 +94,7 @@ internal sealed class EndstoneBridgeController : IAsyncDisposable
     {
         if (_runTask is not null)
             return;
-        AndroidRuntimeLog.Append("BRIDGE", $"Phase 2 UI4.2 starting relay={SafeEndpoint(_relayUri)} server_id={_serverId}; secret hidden");
+        AndroidRuntimeLog.Append("BRIDGE", $"Phase 2 UI4.3 starting relays={_relayUris.Count} active={ActiveRelayName} relay={ActiveRelayEndpoint} server_id={_serverId}; secret hidden");
         _attachTask = Task.Run(() => AttachRuntimeAsync(_cts.Token));
         _runTask = Task.Run(() => RunRelayAsync(_cts.Token));
     }
@@ -340,11 +362,16 @@ internal sealed class EndstoneBridgeController : IAsyncDisposable
     {
         while (!token.IsCancellationRequested)
         {
+            var relayUri = ActiveRelayUri;
+            var relayName = ActiveRelayName;
             try
             {
+                if (_relayFailures > 0)
+                    AndroidRuntimeLog.Append("BRIDGE", $"{relayName} attempt {_relayFailures + 1}/{MaxAttemptsPerRelay} relay={SafeEndpoint(relayUri)}");
+
                 using var ws = new ClientWebSocket();
                 ws.Options.KeepAliveInterval = TimeSpan.FromSeconds(20);
-                await ws.ConnectAsync(_relayUri, token);
+                await ws.ConnectAsync(relayUri, token);
 
                 await SendDirectAsync(ws, new
                 {
@@ -353,7 +380,7 @@ internal sealed class EndstoneBridgeController : IAsyncDisposable
                     serverId = _serverId,
                     secret = _secret,
                     protocol = 1,
-                    appVersion = "phase2"
+                    appVersion = "1.7.1-android-phase2-ui4.3"
                 }, token);
 
                 var helloText = await ReceiveTextAsync(ws, token);
@@ -366,22 +393,33 @@ internal sealed class EndstoneBridgeController : IAsyncDisposable
                 }
 
                 RelayConnected = true;
+                EndstoneConnected = false;
+                _peerMissingSince = DateTimeOffset.UtcNow;
                 LastError = string.Empty;
-                AndroidRuntimeLog.Append("BRIDGE", $"Relay connected {SafeEndpoint(_relayUri)} server_id={_serverId}");
+                AndroidRuntimeLog.Append("BRIDGE", $"Relay connected via {relayName} relay={SafeEndpoint(relayUri)} server_id={_serverId}");
                 QueueOutgoing(new
                 {
                     type = "server_status",
                     status = "running",
                     voiceClients = VcServerApp.ConnectedClients,
-                    bridgeVersion = "0.2.0"
+                    bridgeVersion = "0.2.5",
+                    activeRelay = relayName,
+                    relayIndex = _activeRelayIndex,
+                    relayCount = _relayUris.Count
                 });
 
                 using var connectionCts = CancellationTokenSource.CreateLinkedTokenSource(token);
                 var sender = SenderLoopAsync(ws, connectionCts.Token);
                 var receiver = ReceiverLoopAsync(ws, connectionCts.Token);
-                await Task.WhenAny(sender, receiver);
+                var watchdog = PeerWatchdogAsync(connectionCts.Token);
+                var completed = await Task.WhenAny(sender, receiver, watchdog);
+                if (completed == watchdog)
+                    await watchdog;
                 connectionCts.Cancel();
-                await Task.WhenAll(IgnoreCancellation(sender), IgnoreCancellation(receiver));
+                await Task.WhenAll(IgnoreCancellation(sender), IgnoreCancellation(receiver), IgnoreCancellation(watchdog));
+
+                if (!token.IsCancellationRequested)
+                    throw new IOException("relay websocket closed");
             }
             catch (System.OperationCanceledException) when (token.IsCancellationRequested)
             {
@@ -389,13 +427,13 @@ internal sealed class EndstoneBridgeController : IAsyncDisposable
             }
             catch (Exception ex)
             {
-                LastError = $"{ex.GetType().Name}: {ex.Message}";
-                AndroidRuntimeLog.Append("BRIDGE", $"Relay disconnected: {LastError}; retrying in 5s");
+                RegisterRelayFailure(relayName, relayUri, ex);
             }
             finally
             {
                 RelayConnected = false;
                 EndstoneConnected = false;
+                _peerMissingSince = null;
             }
 
             try
@@ -407,6 +445,50 @@ internal sealed class EndstoneBridgeController : IAsyncDisposable
                 break;
             }
         }
+    }
+
+    private async Task PeerWatchdogAsync(CancellationToken token)
+    {
+        while (!token.IsCancellationRequested)
+        {
+            await Task.Delay(TimeSpan.FromSeconds(2), token);
+            if (EndstoneConnected)
+            {
+                _relayFailures = 0;
+                _peerMissingSince = null;
+                continue;
+            }
+
+            _peerMissingSince ??= DateTimeOffset.UtcNow;
+            if (DateTimeOffset.UtcNow - _peerMissingSince >= TimeSpan.FromSeconds(PeerTimeoutSeconds))
+                throw new IOException($"Endstone peer not visible on {ActiveRelayName} for {PeerTimeoutSeconds}s");
+        }
+    }
+
+    private void RegisterRelayFailure(string relayName, Uri relayUri, Exception ex)
+    {
+        _relayFailures++;
+        LastError = $"{ex.GetType().Name}: {ex.Message}";
+        AndroidRuntimeLog.Append(
+            "BRIDGE",
+            $"{relayName} failed {_relayFailures}/{MaxAttemptsPerRelay}: {LastError}; retrying in 5s");
+
+        if (_relayFailures < MaxAttemptsPerRelay)
+            return;
+
+        if (_relayUris.Count == 1)
+        {
+            AndroidRuntimeLog.Append("BRIDGE", "Primary retry cycle exhausted; no Backup Relay configured, continuing Primary");
+            _relayFailures = 0;
+            return;
+        }
+
+        var previous = relayName;
+        _activeRelayIndex = (_activeRelayIndex + 1) % _relayUris.Count;
+        _relayFailures = 0;
+        AndroidRuntimeLog.Append(
+            "BRIDGE",
+            $"FAILOVER {previous} -> {ActiveRelayName} relay={ActiveRelayEndpoint}; VoiceCraft UDP runtime remains active");
     }
 
     private async Task SenderLoopAsync(ClientWebSocket ws, CancellationToken token)
@@ -458,7 +540,16 @@ internal sealed class EndstoneBridgeController : IAsyncDisposable
                 if (connected != EndstoneConnected)
                 {
                     EndstoneConnected = connected;
-                    AndroidRuntimeLog.Append("BRIDGE", $"Endstone peer {(connected ? "connected" : "disconnected")}");
+                    if (connected)
+                    {
+                        _relayFailures = 0;
+                        _peerMissingSince = null;
+                    }
+                    else
+                    {
+                        _peerMissingSince ??= DateTimeOffset.UtcNow;
+                    }
+                    AndroidRuntimeLog.Append("BRIDGE", $"Endstone peer {(connected ? "connected" : "disconnected")} via {ActiveRelayName}");
                 }
                 break;
             }
@@ -624,7 +715,7 @@ internal sealed class EndstoneBridgeController : IAsyncDisposable
         if (_attachTask is not null)
             await IgnoreCancellation(_attachTask);
         _cts.Dispose();
-        AndroidRuntimeLog.Append("BRIDGE", "Phase 2 controller stopped");
+        AndroidRuntimeLog.Append("BRIDGE", "Phase 2 UI4.3 multi-relay controller stopped");
     }
 
     private sealed record BridgePlayerState(

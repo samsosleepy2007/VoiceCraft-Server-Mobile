@@ -4,17 +4,17 @@ from endstone import Player
 from endstone.command import Command, CommandSender
 from endstone.form import ActionForm, ModalForm, TextInput
 
-from .auto_rebind import VoiceCraftEndstone as VoiceCraftEndstone023
+from .auto_rebind import VoiceCraftEndstone as VoiceCraftEndstone024
 
 
-class VoiceCraftEndstone(VoiceCraftEndstone023):
-    """Endstone 0.2.4: one /vc command with an in-game control menu."""
+class VoiceCraftEndstone(VoiceCraftEndstone024):
+    """Endstone 0.2.5: one /vc command with an in-game control menu."""
 
     # Keep all plugin metadata on the final exported class. Endstone 0.11's
     # Python loader builds PluginDescription from cls.__dict__, so inherited
     # class attributes such as commands/permissions are not sufficient.
     prefix = "VoiceCraftEndstone"
-    version = "0.2.4"
+    version = "0.2.5"
     api_version = "0.11"
     description = "VoiceCraft Endstone player-state, binding and in-game UI bridge"
     authors = ["SamSoSleepy"]
@@ -48,7 +48,7 @@ class VoiceCraftEndstone(VoiceCraftEndstone023):
 
     def on_enable(self) -> None:
         super().on_enable()
-        self.logger.info("VoiceCraft UI ready: /vc")
+        self.logger.info("VoiceCraft UI + multi-relay failover ready: /vc")
 
     def on_command(self, sender: CommandSender, command: Command, args: list[str]) -> bool:
         if command.name != "vc":

@@ -370,7 +370,7 @@ public sealed class ModernMainActivity : Activity
     {
         var (scroll, body) = NewPage(
             T("ตั้งค่า Bridge", "Bridge Setup"),
-            T("วาง Render URL ครั้งเดียว แล้วแอปจะเตรียมค่าที่เหลือให้", "Paste the Render URL once and the app prepares the rest"));
+            T("Primary จำเป็น ส่วน Backup เพิ่มได้ตามต้องการและใช้ Secret เดียวกัน", "Primary is required; optional backups can be added and share the same secret"));
         _bridgeScroll = scroll;
 
         var required = Card(WarningFill, Amber);
@@ -391,6 +391,11 @@ public sealed class ModernMainActivity : Activity
         AddButton(renderButtons, T("เปิด Render", "OPEN RENDER"), OpenRender, primary: true);
         AddButton(renderButtons, T("คัดลอก WSS", "COPY WSS"), CopyWebSocket);
         setup.AddView(renderButtons);
+
+        var backupButtons = ButtonRow();
+        AddButton(backupButtons, T("+ เพิ่ม/จัดการลิงก์สำรอง", "+ MANAGE BACKUP RELAYS"), OpenBackupRelays, primary: true);
+        setup.AddView(backupButtons);
+        setup.AddView(Label(T("Backup เป็น Optional — ไม่เพิ่มก็เปิด Server ด้วย Primary ได้ตามปกติ", "Backups are optional — Primary-only startup works normally."), 11, Muted));
 
         setup.AddView(InputLabel(T("WebSocket URL • สร้างอัตโนมัติ", "WebSocket URL • auto generated")));
         _webSocketUrl = ReadOnly(T("ใส่ Render URL ด้านบน", "Enter Render URL above"));
@@ -932,6 +937,8 @@ public sealed class ModernMainActivity : Activity
         var secret = CurrentSecret();
         if (maskSecret && secret.Length > 0)
             secret = "••••••••••••••••";
+        var backups = ServerPreferences.GetBridgeBackupUrls(this);
+        var backupArray = "[" + string.Join(", ", backups.Select(url => $"\"{url.Replace("\"", "\\\"")}\"")) + "]";
         return
             "[tracking]\n" +
             "interval_ticks = 2\n" +
@@ -945,9 +952,12 @@ public sealed class ModernMainActivity : Activity
             "[bridge]\n" +
             "enabled = true\n" +
             $"url = \"{CurrentWebSocket()}\"\n" +
+            $"backup_urls = {backupArray}\n" +
             $"server_id = \"{CurrentServerId()}\"\n" +
             $"secret = \"{secret}\"\n" +
-            "reconnect_seconds = 5\n";
+            "reconnect_seconds = 5\n" +
+            "max_attempts = 5\n" +
+            "peer_timeout_seconds = 30\n";
     }
 
     private List<ValidationIssue> CollectStartIssues()
@@ -1174,8 +1184,22 @@ public sealed class ModernMainActivity : Activity
         if (_relaySummary != null)
         {
             var wss = CurrentWebSocket();
-            _relaySummary.Text = string.IsNullOrEmpty(wss) ? T("ยังไม่ได้ตั้งค่า Relay", "Relay not configured") : wss;
-            _relaySummary.SetTextColor(string.IsNullOrEmpty(wss) ? Red : Ink);
+            var backups = ServerPreferences.GetBridgeBackupUrls(this);
+            if (string.IsNullOrEmpty(wss))
+            {
+                _relaySummary.Text = T("ยังไม่ได้ตั้งค่า Relay", "Relay not configured");
+                _relaySummary.SetTextColor(Red);
+            }
+            else if (VcServerApp.IsRunning || VoiceCraftServerService.IsServiceRunning)
+            {
+                _relaySummary.Text = $"{VoiceCraftServerService.BridgeActiveRelay} • Relay {VoiceCraftServerService.BridgeActiveRelayIndex + 1}/{VoiceCraftServerService.BridgeRelayCount}\n{wss}\n{T("Backup", "Backups")}: {backups.Count}";
+                _relaySummary.SetTextColor(Ink);
+            }
+            else
+            {
+                _relaySummary.Text = $"Primary: {wss}\n{T("Backup (Optional)", "Backups (Optional)")}: {backups.Count}";
+                _relaySummary.SetTextColor(Ink);
+            }
         }
 
         if (_start != null)
@@ -1427,6 +1451,12 @@ public sealed class ModernMainActivity : Activity
         Pulse(_serverKey);
     }
 
+    private void OpenBackupRelays()
+    {
+        SaveCurrentConfiguration();
+        StartActivity(new Intent(this, typeof(BackupRelayActivity)));
+    }
+
     private void OpenRender()
     {
         var serviceUrl = _renderUrl?.Text?.Trim() ?? ToServiceUrl(ServerPreferences.GetBridgeUrl(this));
@@ -1447,7 +1477,7 @@ public sealed class ModernMainActivity : Activity
         var scroll = new ScrollView(this);
         var wrap = new LinearLayout(this) { Orientation = Orientation.Vertical };
         wrap.SetPadding(Dp(18), Dp(12), Dp(18), Dp(18));
-        wrap.AddView(Label(T("เริ่มจาก Render → Android → Endstone → VoiceCraft Client → /vcbind", "Start with Render → Android → Endstone → VoiceCraft Client → /vcbind"), 14, Primary, true));
+        wrap.AddView(Label(T("เริ่มจาก Render → Android → Endstone → VoiceCraft Client → /vc", "Start with Render → Android → Endstone → VoiceCraft Client → /vc"), 14, Primary, true));
         var guide = Label(_thai ? ThaiGuide() : EnglishGuide(), 13, Ink);
         guide.SetPadding(0, Dp(12), 0, 0);
         guide.SetLineSpacing(0, 1.12f);
@@ -1482,7 +1512,7 @@ public sealed class ModernMainActivity : Activity
         "• ช่องที่ขาดหรือผิดจะเป็นกรอบสีแดง\n\n" +
         "3) Endstone บน MCSV\n" +
         "• ใช้ Endstone 0.11.x\n" +
-        "• อัปโหลด endstone_voicecraft-0.2.0-py3-none-any.whl ไป plugins/\n" +
+        "• อัปโหลด endstone_voicecraft-0.2.5-py3-none-any.whl ไป plugins/\n" +
         "• Start หนึ่งครั้งเพื่อสร้างไฟล์ config\n" +
         "• กดคัดลอก Plugin Config ในแอป แล้วนำไปแทน config.toml\n" +
         "• Restart Minecraft Server แล้วตรวจว่า BRIDGE connected / android=connected\n\n" +
@@ -1496,7 +1526,7 @@ public sealed class ModernMainActivity : Activity
         "• ใส่ IP:Port จากหน้า Home และตั้ง Positioning Type = Server\n" +
         "• เชื่อมแล้วอ่าน Binding Key 5 ตัวจาก Description\n\n" +
         "6) Bind ใน Minecraft\n" +
-        "• ใช้ /vcbind ABC12 โดยแทน ABC12 ด้วย Binding Key ของคุณ\n\n" +
+        "• ใช้ /vc แล้วเลือก Bind Microphone จากนั้นกรอก Binding Key ของคุณ\n\n" +
         "7) ข้อจำกัดปัจจุบัน\n" +
         "• Render WSS ส่ง state + binding เท่านั้น\n" +
         "• เสียงยังใช้ UDP ไป Android โดยตรง ผู้เล่นนอก LAN ยังต้องมี public UDP relay ใน Phase ถัดไป\n\n" +
@@ -1520,7 +1550,7 @@ public sealed class ModernMainActivity : Activity
         "• Bridge Secret must exactly match BRIDGE_SECRET on Render.\n" +
         "• Missing or invalid fields are highlighted red.\n\n" +
         "3) Configure Endstone on MCSV\n" +
-        "• Use Endstone 0.11.x and upload endstone_voicecraft-0.2.0-py3-none-any.whl to plugins/.\n" +
+        "• Use Endstone 0.11.x and upload endstone_voicecraft-0.2.5-py3-none-any.whl to plugins/.\n" +
         "• Start once, then replace plugin config.toml with the ready-to-paste config copied from this app.\n" +
         "• Restart Minecraft and verify BRIDGE connected / android=connected.\n\n" +
         "4) Start VoiceCraft Server\n" +
@@ -1531,7 +1561,7 @@ public sealed class ModernMainActivity : Activity
         "• For current testing, keep the client on the same LAN as Android.\n" +
         "• Use a compatible VoiceCraft 1.7.x client, connect to Home IP:Port, and set Positioning Type = Server.\n\n" +
         "6) Bind in Minecraft\n" +
-        "• Run /vcbind ABC12 using your actual 5-character binding key.\n\n" +
+        "• Run /vc, choose Bind Microphone, and enter your actual 5-character binding key.\n\n" +
         "7) Current limitation\n" +
         "• Render WSS carries state/binding only. Audio still uses UDP directly to Android; public Internet voice needs the future UDP relay phase.\n\n" +
         "If an error occurs, open Logs for cause and suggested fix.";
@@ -1574,6 +1604,13 @@ public sealed class ModernMainActivity : Activity
                 _handler.PostDelayed(_refreshRunnable, 750);
         });
         _handler.Post(_refreshRunnable);
+    }
+
+    protected override void OnResume()
+    {
+        base.OnResume();
+        RefreshBridgePreview();
+        RefreshUi();
     }
 
     protected override void OnPause()

@@ -10,6 +10,7 @@ from endstone import Player
 from endstone.command import CommandSender
 
 from .bridge import EndstoneRelayClient
+from .failover import MultiRelayEndstoneClient
 from .plugin import VoiceCraftEndstone as VoiceCraftEndstoneBase
 
 
@@ -123,7 +124,7 @@ class CompatibleEndstoneRelayClient(EndstoneRelayClient):
 
 
 class VoiceCraftEndstone(VoiceCraftEndstoneBase):
-    """Endstone 0.2.1 companion plugin for VoiceCraft Server Mobile UI4.1."""
+    """Endstone 0.2.1 companion plugin for VoiceCraft Server Mobile UI4.3."""
 
     version = "0.2.1"
 
@@ -208,20 +209,44 @@ class VoiceCraftEndstone(VoiceCraftEndstoneBase):
         reconnect_seconds = self._bounded_float(
             bridge.get("reconnect_seconds", 5), 1.0, 60.0, 5.0
         )
+        max_attempts = self._bounded_int(bridge.get("max_attempts", 5), 1, 20, 5)
+        peer_timeout_seconds = self._bounded_float(
+            bridge.get("peer_timeout_seconds", 30), 5.0, 300.0, 30.0
+        )
 
         usable, validation_error = self._validate_bridge_config(
             enabled, url, server_id, secret
         )
+        relay_urls: list[str] = [url] if usable else []
+        raw_backups = bridge.get("backup_urls", [])
+        if isinstance(raw_backups, str):
+            raw_backups = [raw_backups]
+        if not isinstance(raw_backups, (list, tuple)):
+            raw_backups = []
+        for raw_backup in raw_backups:
+            backup = str(raw_backup or "").strip()
+            if not backup or backup in relay_urls:
+                continue
+            backup_ok, backup_error = self._validate_bridge_config(True, backup, server_id, secret)
+            if backup_ok:
+                relay_urls.append(backup)
+            else:
+                self.logger.warning(
+                    f"BRIDGE optional Backup Relay ignored: {backup_error}; relay={self._safe_bridge_endpoint(backup)}"
+                )
+
         self._bridge_enabled = usable
         self._bridge_server_id = server_id or "mcsv-main"
         self._bridge = (
-            CompatibleEndstoneRelayClient(
+            MultiRelayEndstoneClient(
                 self.logger,
-                url,
+                relay_urls,
                 self._bridge_server_id,
                 secret,
                 reconnect_seconds,
                 plugin_version=self.version,
+                max_attempts=max_attempts,
+                peer_timeout_seconds=peer_timeout_seconds,
             )
             if usable
             else None
@@ -230,8 +255,12 @@ class VoiceCraftEndstone(VoiceCraftEndstoneBase):
         if enabled and not usable:
             self.logger.warning(
                 f"BRIDGE config invalid: {validation_error}; bridge remains disabled. "
-                "Use Copy Plugin Config in VoiceCraft Server Mobile UI4.1."
+                "Use Copy Plugin Config in VoiceCraft Server Mobile UI4.3."
             )
+
+    @staticmethod
+    def _safe_bridge_endpoint(url: str) -> str:
+        return str(url or "").split("?", 1)[0]
 
     def _command_unbind(self, sender: CommandSender) -> bool:
         if not isinstance(sender, Player):

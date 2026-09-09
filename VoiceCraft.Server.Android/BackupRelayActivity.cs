@@ -1,6 +1,7 @@
 using Android.App;
 using Android.Content;
 using Android.Graphics;
+using Android.Graphics.Drawables;
 using Android.OS;
 using Android.Text;
 using Android.Views;
@@ -135,10 +136,10 @@ public sealed class BackupRelayActivity : Activity
             Text = value,
             Hint = "https://backup.onrender.com",
             InputType = InputTypes.ClassText | InputTypes.TextVariationUri,
-            SingleLine = true,
             TextSize = 13,
             Background = Round(SurfaceSoft, 14, Border)
         };
+        input.SetSingleLine(true);
         input.SetTextColor(Ink);
         input.SetHintTextColor(Muted);
         input.SetPadding(Dp(12), Dp(7), Dp(12), Dp(7));
