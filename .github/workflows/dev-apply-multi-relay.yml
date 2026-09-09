@@ -27,12 +27,15 @@ jobs:
           python tools/apply_multi_relay_branch.py
 
       - name: Compile Endstone Python
-        run: python -m compileall -q VoiceCraft.Endstone/src
+        shell: bash
+        run: |
+          python -m compileall -q VoiceCraft.Endstone/src
+          find VoiceCraft.Endstone -type d -name __pycache__ -prune -exec rm -rf {} +
 
-      - name: Remove temporary workflow
-        run: rm .github/workflows/dev-apply-multi-relay.yml
+      - name: Restore workflow files for source-only push
+        run: git checkout HEAD -- .github/workflows
 
-      - name: Commit generated feature changes
+      - name: Commit generated feature source changes
         shell: bash
         run: |
           set -euo pipefail
