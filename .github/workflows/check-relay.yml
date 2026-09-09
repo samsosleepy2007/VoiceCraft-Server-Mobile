@@ -24,10 +24,20 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Node 20
+      - name: Setup Node 22
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
+
+      - name: Validate relay 0.2.1 source guards
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -q '"version": "0.2.1"' VoiceCraft.Bridge.Relay/package.json
+          grep -q 'VoiceCraft Endstone Relay v0.2.1' VoiceCraft.Bridge.Relay/index.js
+          grep -q 'case "unbind"' VoiceCraft.Bridge.Relay/index.js
+          grep -q 'case "unbind_result"' VoiceCraft.Bridge.Relay/index.js
+          grep -q 'Destructive control messages are intentionally never cached/replayed' VoiceCraft.Bridge.Relay/index.js
 
       - name: Install dependencies
         working-directory: VoiceCraft.Bridge.Relay
@@ -37,7 +47,7 @@ jobs:
         working-directory: VoiceCraft.Bridge.Relay
         run: npm run check
 
-      - name: Health and websocket smoke test
+      - name: Health, forwarding and destructive-message smoke test
         working-directory: VoiceCraft.Bridge.Relay
         shell: bash
         env:
@@ -62,40 +72,51 @@ jobs:
 
           const secret = "ci-test-secret-0123456789abcdef";
           const serverId = "ci-room";
+          const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-          function open(role) {
-            return new Promise((resolve, reject) => {
-              const ws = new WebSocket("ws://127.0.0.1:18080/bridge");
-              const timer = setTimeout(() => reject(new Error(`${role} timeout`)), 5000);
+          async function connect(role) {
+            const ws = new WebSocket("ws://127.0.0.1:18080/bridge");
+            const inbox = [];
+            ws.on("message", (raw) => {
+              try {
+                inbox.push(JSON.parse(raw.toString()));
+              } catch {
+              }
+            });
+            await new Promise((resolve, reject) => {
+              const timer = setTimeout(() => reject(new Error(`${role} open timeout`)), 5000);
               ws.on("open", () => {
-                ws.send(JSON.stringify({ type: "hello", role, serverId, secret }));
-              });
-              ws.on("message", (raw) => {
-                const msg = JSON.parse(raw.toString());
-                if (msg.type === "hello_ok") {
-                  clearTimeout(timer);
-                  resolve(ws);
-                }
+                ws.send(JSON.stringify({ type: "hello", role, serverId, secret, protocol: 1 }));
+                clearTimeout(timer);
+                resolve();
               });
               ws.on("error", reject);
             });
+            const conn = { ws, inbox, role };
+            const hello = await waitMessage(conn, (msg) => msg.type === "hello_ok", `${role} hello_ok`);
+            if (hello.relayVersion !== "0.2.1") {
+              throw new Error(`unexpected relay version: ${hello.relayVersion}`);
+            }
+            return conn;
           }
 
-          const endstone = await open("endstone");
-          const android = await open("android");
-
-          const received = new Promise((resolve, reject) => {
-            const timer = setTimeout(() => reject(new Error("player_state was not forwarded")), 5000);
-            android.on("message", (raw) => {
-              const msg = JSON.parse(raw.toString());
-              if (msg.type === "player_state" && msg.xuid === "123") {
-                clearTimeout(timer);
-                resolve(msg);
+          async function waitMessage(conn, predicate, label, timeout = 5000) {
+            const deadline = Date.now() + timeout;
+            while (Date.now() < deadline) {
+              const index = conn.inbox.findIndex(predicate);
+              if (index >= 0) {
+                return conn.inbox.splice(index, 1)[0];
               }
-            });
-          });
+              await delay(25);
+            }
+            throw new Error(`${label} was not received`);
+          }
 
-          endstone.send(JSON.stringify({
+          const endstone = await connect("endstone");
+          const android = await connect("android");
+          await waitMessage(android, (msg) => msg.type === "sync_end", "initial sync_end");
+
+          endstone.ws.send(JSON.stringify({
             type: "player_state",
             serverId,
             name: "CI",
@@ -108,21 +129,13 @@ jobs:
             yaw: 3,
             pitch: 4
           }));
+          await waitMessage(
+            android,
+            (msg) => msg.type === "player_state" && msg.xuid === "123",
+            "player_state forwarding"
+          );
 
-          await received;
-
-          const disconnectReceived = new Promise((resolve, reject) => {
-            const timer = setTimeout(() => reject(new Error("voice_client_disconnected was not forwarded")), 5000);
-            endstone.on("message", (raw) => {
-              const msg = JSON.parse(raw.toString());
-              if (msg.type === "voice_client_disconnected" && msg.xuid === "123") {
-                clearTimeout(timer);
-                resolve(msg);
-              }
-            });
-          });
-
-          android.send(JSON.stringify({
+          android.ws.send(JSON.stringify({
             type: "voice_client_disconnected",
             serverId,
             name: "CI",
@@ -130,9 +143,58 @@ jobs:
             uuid: "ci",
             entityId: 7
           }));
+          await waitMessage(
+            endstone,
+            (msg) => msg.type === "voice_client_disconnected" && msg.xuid === "123",
+            "voice_client_disconnected forwarding"
+          );
 
-          await disconnectReceived;
-          endstone.close();
-          android.close();
-          console.log("Relay websocket forwarding + disconnect event OK");
+          const requestId = "relay-smoke-unbind-001";
+          endstone.ws.send(JSON.stringify({
+            type: "unbind",
+            serverId,
+            requestId,
+            name: "CI",
+            xuid: "123",
+            uuid: "ci",
+            entityId: 7
+          }));
+          const unbind = await waitMessage(
+            android,
+            (msg) => msg.type === "unbind" && msg.requestId === requestId,
+            "unbind forwarding"
+          );
+          if (unbind.entityId !== 7) throw new Error("unbind entityId changed in relay");
+
+          android.ws.send(JSON.stringify({
+            type: "unbind_result",
+            serverId,
+            requestId,
+            name: "CI",
+            xuid: "123",
+            uuid: "ci",
+            success: true,
+            reason: "",
+            entityId: 7
+          }));
+          await waitMessage(
+            endstone,
+            (msg) => msg.type === "unbind_result" && msg.requestId === requestId && msg.success === true,
+            "unbind_result forwarding"
+          );
+
+          // Reconnect Android to the same room. Relay cache may replay state and
+          // pending bind messages, but destructive unbind must never replay.
+          android.ws.close();
+          await delay(100);
+          const android2 = await connect("android");
+          await waitMessage(android2, (msg) => msg.type === "sync_end", "reconnect sync_end");
+          await delay(200);
+          if (android2.inbox.some((msg) => msg.type === "unbind")) {
+            throw new Error("destructive unbind was replayed to a new Android connection");
+          }
+
+          endstone.ws.close();
+          android2.ws.close();
+          console.log("Relay 0.2.1 forwarding + non-replayed unbind contract OK");
           NODE
