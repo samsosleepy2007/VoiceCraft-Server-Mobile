@@ -20,7 +20,11 @@ jobs:
           fetch-depth: 0
 
       - name: Apply source patches
-        run: python tools/apply_multi_relay_branch.py
+        shell: bash
+        run: |
+          set -euo pipefail
+          sed -i '/Use Copy Plugin Config in VoiceCraft Server Mobile UI4\.1\./d' tools/apply_multi_relay_branch.py
+          python tools/apply_multi_relay_branch.py
 
       - name: Compile Endstone Python
         run: python -m compileall -q VoiceCraft.Endstone/src
