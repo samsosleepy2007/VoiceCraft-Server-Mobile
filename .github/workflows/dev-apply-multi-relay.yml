@@ -1,0 +1,40 @@
+name: Apply Multi Relay Feature Patch
+
+on:
+  push:
+    branches: [multi-relay-auto-failover]
+    paths:
+      - ".github/workflows/dev-apply-multi-relay.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout feature branch
+        uses: actions/checkout@v4
+        with:
+          ref: multi-relay-auto-failover
+          fetch-depth: 0
+
+      - name: Apply source patches
+        run: python tools/apply_multi_relay_branch.py
+
+      - name: Compile Endstone Python
+        run: python -m compileall -q VoiceCraft.Endstone/src
+
+      - name: Remove temporary workflow
+        run: rm .github/workflows/dev-apply-multi-relay.yml
+
+      - name: Commit generated feature changes
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --stat
+          git commit -m "feat: add optional multi-relay auto failover"
+          git push origin HEAD:multi-relay-auto-failover
