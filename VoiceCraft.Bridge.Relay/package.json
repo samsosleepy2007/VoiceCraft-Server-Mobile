@@ -1,6 +1,6 @@
 {
   "name": "voicecraft-endstone-relay",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "private": true,
   "description": "WebSocket control-plane relay between VoiceCraft Endstone and VoiceCraft Server Mobile",
   "type": "module",

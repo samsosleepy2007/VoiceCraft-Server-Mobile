@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Android.Content;
 
 namespace VoiceCraft.Server.Android;
@@ -9,6 +10,7 @@ internal static class ServerPreferences
     internal const string ExtraServerKey = "server_key";
     internal const string ExtraBridgeEnabled = "bridge_enabled";
     internal const string ExtraBridgeUrl = "bridge_url";
+    internal const string ExtraBridgeBackupUrls = "bridge_backup_urls_json";
     internal const string ExtraBridgeServerId = "bridge_server_id";
     internal const string ExtraBridgeSecret = "bridge_secret";
     internal const string ExtraLanguage = "ui_language";
@@ -38,6 +40,42 @@ internal static class ServerPreferences
 
     internal static string GetBridgeUrl(Context context) =>
         Get(context).GetString(ExtraBridgeUrl, "") ?? string.Empty;
+
+    internal static IReadOnlyList<string> GetBridgeBackupUrls(Context context)
+    {
+        var json = Get(context).GetString(ExtraBridgeBackupUrls, "[]") ?? "[]";
+        try
+        {
+            var values = JsonSerializer.Deserialize<List<string>>(json) ?? new List<string>();
+            var cleaned = new List<string>();
+            foreach (var raw in values)
+            {
+                var value = (raw ?? string.Empty).Trim();
+                if (value.Length == 0 || cleaned.Contains(value, StringComparer.OrdinalIgnoreCase))
+                    continue;
+                cleaned.Add(value);
+            }
+            return cleaned;
+        }
+        catch
+        {
+            return Array.Empty<string>();
+        }
+    }
+
+    internal static IReadOnlyList<string> GetBridgeRelayUrls(Context context)
+    {
+        var primary = GetBridgeUrl(context).Trim();
+        var result = new List<string>();
+        if (primary.Length > 0)
+            result.Add(primary);
+        foreach (var backup in GetBridgeBackupUrls(context))
+        {
+            if (!result.Contains(backup, StringComparer.OrdinalIgnoreCase))
+                result.Add(backup);
+        }
+        return result;
+    }
 
     internal static string GetBridgeServerId(Context context) =>
         Get(context).GetString(ExtraBridgeServerId, "mcsv-main") ?? "mcsv-main";
@@ -69,6 +107,21 @@ internal static class ServerPreferences
             .PutString(ExtraBridgeUrl, url.Trim())!
             .PutString(ExtraBridgeServerId, serverId.Trim())!
             .PutString(ExtraBridgeSecret, secret.Trim())!
+            .Apply();
+    }
+
+    internal static void SaveBridgeBackups(Context context, IEnumerable<string> backupUrls)
+    {
+        var cleaned = new List<string>();
+        foreach (var raw in backupUrls)
+        {
+            var value = (raw ?? string.Empty).Trim();
+            if (value.Length == 0 || cleaned.Contains(value, StringComparer.OrdinalIgnoreCase))
+                continue;
+            cleaned.Add(value);
+        }
+        Get(context).Edit()!
+            .PutString(ExtraBridgeBackupUrls, JsonSerializer.Serialize(cleaned))!
             .Apply();
     }
 

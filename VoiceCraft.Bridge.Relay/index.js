@@ -95,6 +95,15 @@ function forwardEndstone(serverId, room, message) {
       sendJson(room.android, message);
       return;
     }
+    case "unbind": {
+      const requestId = String(message.requestId || "");
+      const entityId = Number(message.entityId);
+      if (!requestId || !Number.isInteger(entityId)) return;
+      // Destructive control messages are intentionally never cached/replayed.
+      // A stale entityId must never be able to disconnect a later binding.
+      sendJson(room.android, message);
+      return;
+    }
     case "sync_begin":
     case "sync_end":
     case "heartbeat":
@@ -119,6 +128,7 @@ function forwardAndroid(serverId, room, message) {
     case "server_status":
     case "entity_key":
     case "voice_client_disconnected":
+    case "unbind_result":
       sendJson(room.endstone, message);
       return;
     default:
@@ -141,7 +151,7 @@ const server = http.createServer((req, res) => {
   }
 
   res.writeHead(200, { "content-type": "text/plain; charset=utf-8" });
-  res.end("VoiceCraft Endstone Relay v0.2.0\n");
+  res.end("VoiceCraft Endstone Relay v0.2.1\n");
 });
 
 const wss = new WebSocketServer({ noServer: true, maxPayload: MAX_MESSAGE_BYTES });
@@ -210,7 +220,7 @@ wss.on("connection", (ws) => {
       room[role] = ws;
 
       console.log(`[bridge] ${role} connected server=${serverId}`);
-      sendJson(ws, { type: "hello_ok", role, serverId, relayVersion: "0.2.0" });
+      sendJson(ws, { type: "hello_ok", role, serverId, relayVersion: "0.2.1" });
       notifyPeerStatus(serverId, room);
 
       if (role === "android") {

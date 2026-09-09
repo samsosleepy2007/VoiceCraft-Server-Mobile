@@ -2,12 +2,13 @@
 
 Endstone companion plugin for **VoiceCraft Server Mobile**.
 
-Target: **Endstone API 0.11.x / MCSV Endstone 0.11.10**.
+Target runtime:
 
-Current companion bundle:
-
-- Android: **VoiceCraft Server Mobile UI4.2** (`1.7.1-android-phase2-ui4.2`, version code `8`)
-- Endstone plugin: **`0.2.4`**
+- Endstone API: **0.11.x**
+- Validated MCSV Endstone: **0.11.10**
+- Android companion: **VoiceCraft Server Mobile UI4.4** (`1.7.1-android-phase2-ui4.4`, version code `10`)
+- Endstone plugin: **`0.2.6`**
+- Render Relay: **`0.2.1`**
 - Render Relay protocol: **`1`**
 - VoiceCraft upstream protocol: **v1.7.1 unchanged**
 
@@ -15,42 +16,46 @@ Current companion bundle:
 
 ```text
 Minecraft Bedrock @ MCSV
-        |
-     Endstone
-        |
- outbound WSS
-        v
- Render Relay
-        ^
- outbound WSS
-        |
-VoiceCraft Server Mobile UI4.2
-        |
- VoiceCraft UDP
-        v
- VoiceCraft clients
+        │
+        ▼
+Endstone VoiceCraft 0.2.6
+        │ outbound WSS
+        ▼
+Primary Render Relay
+        │
+        ├──── failover ────> Backup Relay(s)
+        │
+        ▼ outbound WSS
+VoiceCraft Server Mobile UI4.4
+        │
+        ▼
+VoiceCraft v1.7.1 UDP runtime
 ```
 
-The Render relay carries Minecraft player state, binding control messages, snapshots and disconnect/rebind events. Voice audio still uses the normal VoiceCraft/LiteNetLib UDP path directly to the Android server.
+Render carries Minecraft state, binding/control messages and snapshots only. Voice audio remains direct VoiceCraft/LiteNetLib UDP to Android.
 
-## Endstone 0.2.4
+## `/vc` player controls
 
-Version `0.2.4` fixes the command-registration regression present in 0.2.2/0.2.3 and replaces the old command set with a single in-game control menu.
-
-Run:
+The only public VoiceCraft command is:
 
 ```text
 /vc
 ```
 
-This opens an Endstone `ActionForm` with:
+The menu is context-aware:
 
-- **Bind Microphone** — opens the Binding Key form and submits through the existing secure bind path.
-- **Cancel Pending Bind** — cancels a pending bind request only; it does not disconnect an already-bound VoiceCraft client.
-- **Status** — shows bridge state, online/tracked counts, binding state, dimension, position, yaw and pitch.
-- **Tracked Players (Admin)** — shows tracked player-state snapshots and requires operator permission.
+```text
+Not bound  → Bind Microphone
+Pending    → Cancel Pending Bind
+Bound      → Disconnect / Unbind Microphone
+```
 
-The old public slash commands are no longer registered:
+The menu also includes:
+
+- **Status** — bridge state, binding state and local player state.
+- **Tracked Players (Admin)** — operator-only tracker view.
+
+The old public commands remain intentionally unregistered:
 
 ```text
 /vcbind
@@ -59,87 +64,113 @@ The old public slash commands are no longer registered:
 /vcdump
 ```
 
-Their underlying handlers are retained internally and are called by the `/vc` UI, so the existing binding and diagnostic logic is not duplicated.
+Their internal logic is still reused by the UI where appropriate.
 
-### Why the commands disappeared in 0.2.2/0.2.3
+## Initial Bind
 
-Endstone 0.11 builds Python plugin metadata from the final exported class `__dict__`. The 0.2.2 and 0.2.3 entry points exported subclasses that inherited `commands` and `permissions` from parent classes. Python method inheritance still worked, so player tracking, Auto Bind and Auto Rebind continued to function, but Endstone did not see inherited command metadata while constructing `PluginDescription`.
+For an unbound player join:
 
-0.2.4 declares `commands`, `permissions`, `api_version`, `prefix`, `description` and `authors` directly on the final exported class. CI now checks this exact loader-sensitive condition so the regression cannot silently return.
+1. Endstone waits for a valid real player state.
+2. Transitional BDS states such as `Y=32768` are ignored.
+3. The Bind form opens automatically.
+4. The player enters the one-use Binding Key shown by the VoiceCraft client.
+5. Endstone sends the bind through Render to Android.
+6. Android associates the VoiceCraft entity with that Minecraft player.
 
-## Automatic Bind and Rebind
+## Unexpected VoiceCraft disconnect / Auto Rebind
 
-### Initial join
+If an already-bound VoiceCraft client disappears unexpectedly while the Minecraft player remains online:
 
-When an unbound player joins:
+1. Android emits `voice_client_disconnected`.
+2. Endstone removes the local bound state.
+3. A disconnect warning is shown.
+4. After 5 seconds, Endstone opens the Bind form again.
 
-1. Endstone waits until the player's real spawn state is valid.
-2. Transitional BDS positions such as `Y=32768` are ignored.
-3. Endstone opens **VoiceCraft - Bind Microphone** automatically.
-4. The player enters the one-use Binding Key shown by VoiceCraft Client.
-5. The request is sent through Render to Android.
-6. Android binds the Minecraft player state to the matching VoiceCraft entity and returns `bind_result`.
-7. A wrong or expired key causes the Binding Key form to be offered again.
+Stale entity events are ignored so an old disconnect cannot reopen the form after a successful new bind.
 
-The Binding Key and Bridge Secret are never intentionally printed to the plugin logs.
+## Real Manual Unbind
 
-### VoiceCraft client disconnect
+For a bound player, `/vc` shows **Disconnect / Unbind Microphone**.
 
-Endstone 0.2.3+ receives `voice_client_disconnected` when Android detects that a previously-bound VoiceCraft entity disappeared while the Minecraft player is still online.
-
-The plugin:
-
-- warns the player immediately,
-- waits `100 ticks / 5 seconds`,
-- opens the Binding Key form again,
-- suppresses duplicate rebind timers,
-- ignores stale disconnect events for an older VoiceCraft entity,
-- cancels unnecessary delayed UI if the player leaves or binds successfully first.
-
-## Features
-
-- Tracks Bedrock player name, XUID, UUID, dimension, X/Y/Z, yaw and pitch.
-- Filters pre-spawn/transitional states before they reach VoiceCraft.
-- Sends changed player state at the configured scheduler interval (default 2 ticks / about 10 Hz at 20 TPS).
-- Automatic join-time Binding Key UI.
-- Automatic 5-second Rebind UI after VoiceCraft client disconnect.
-- `/vc` in-game control menu.
-- Strict Render bridge configuration validation.
-- Automatic Render relay reconnect.
-- Snapshot synchronization when Android reconnects or requests a fresh snapshot.
-- Secrets and Binding Keys hidden from normal logs.
-- Render Relay protocol `1` preserved.
-
-## Install on MCSV
-
-1. Run the Bedrock server through Endstone `0.11.x` (CI tests against `0.11.10`).
-2. Remove older `endstone_voicecraft-*.whl` files from `plugins/`.
-3. Install:
+After confirmation:
 
 ```text
-endstone_voicecraft-0.2.4-py3-none-any.whl
+Endstone
+  │
+  ├─ checks Relay + Android peer are reachable
+  ├─ sends unbind(requestId, entityId)
+  ▼
+Render Relay 0.2.1
+  │
+  ├─ validates requestId/entityId shape
+  ├─ forwards only
+  └─ NEVER caches/replays destructive unbind
+  ▼
+Android UI4.4
+  │
+  ├─ validates player and current entityId
+  ├─ rejects stale requests
+  ├─ disconnects the actual VoiceCraft NetPeer
+  └─ returns unbind_result
+  ▼
+Endstone
+  ├─ clears bound state
+  └─ suppresses Auto Rebind
 ```
 
-4. Start the server once so Endstone creates the plugin data/config folder.
-5. In VoiceCraft Server Mobile UI4.2, open **Bridge** and configure Render URL, Server ID and Bridge Secret.
-6. Use **Copy Plugin Config** in the Android app and paste the generated TOML into the Endstone plugin `config.toml`.
-7. Restart the Bedrock/Endstone server.
-8. Join Minecraft and verify that Auto Bind appears for an unbound player.
-9. Run `/vc` and verify that the VoiceCraft menu opens.
+### Timeout / late-result safety
 
-Endstone provides the Python runtime used by the plugin. The wheel declares `aiohttp>=3.9` for its outbound WebSocket client.
+Endstone waits 20 seconds for `unbind_result`.
 
-## Required shared settings
+If confirmation times out:
 
-These values must match across all three components:
+- the `/vc` UI is released from `Disconnecting` so the player is not stuck forever;
+- the timeout is treated as **unknown**, not as a confirmed failure;
+- Endstone retains a bounded tombstone for that request;
+- a late success can still reconcile the old entity safely;
+- a late result for an old entity cannot clear a newer binding;
+- if the player retried the same entity, a late successful first request can finalize the desired disconnect and clear the redundant pending retry.
+
+## Multi-relay failover
+
+The bridge supports one Primary URL plus zero or more backups.
 
 ```text
-Render BRIDGE_SECRET = Android Bridge Secret = Endstone bridge.secret
-Android Server ID    = Endstone bridge.server_id
-Android WebSocket    = Endstone bridge.url = wss://<render-service>/bridge
+Primary
+  -> Backup #1
+  -> Backup #2
+  -> ...
+  -> Primary
 ```
 
-Recommended configuration generated by the Android app:
+Default behavior:
+
+```text
+reconnect_seconds = 5
+max_attempts = 5
+peer_timeout_seconds = 30
+```
+
+A relay is healthy only when both the WebSocket is connected and the Android peer is visible.
+
+## In-game Relay alerts
+
+Relay status transitions are written into a thread-safe queue by the networking thread and drained from the normal Endstone server thread.
+
+Player chat messages use Bedrock `§` formatting and no emoji:
+
+```text
+Red     relay/voice control plane temporarily unavailable
+Red     no Backup Relay configured after Primary retry exhaustion
+Yellow  switching between Primary / Backup #N
+Green   relay paired and service recovered
+```
+
+One outage session emits one initial outage warning instead of repeating it every 5-second reconnect attempt.
+
+## Configuration
+
+Example `config.toml`:
 
 ```toml
 [tracking]
@@ -155,75 +186,57 @@ max_key_length = 128
 
 [bridge]
 enabled = true
-url = "wss://YOUR-SERVICE.onrender.com/bridge"
+url = "wss://voicecraft-primary.onrender.com/bridge"
+backup_urls = [
+  "wss://voicecraft-backup1.onrender.com/bridge",
+  "wss://voicecraft-backup2.onrender.com/bridge"
+]
 server_id = "mcsv-main"
-secret = "THE_SAME_BRIDGE_SECRET"
+secret = "THE_SAME_SECRET_USED_BY_ANDROID_AND_EVERY_RELAY"
 reconnect_seconds = 5
+max_attempts = 5
+peer_timeout_seconds = 30
 ```
 
-## Expected logs
+Rules:
 
-After Render, Android and Endstone are connected correctly:
+- Primary `url` must use `ws://` or `wss://` and path `/bridge`.
+- `server_id` must match Android.
+- `secret` must match Android and every Render relay.
+- Optional invalid backup URLs are ignored rather than invalidating a valid Primary.
+
+## Installation
+
+Install the wheel into the Endstone plugin environment:
 
 ```text
-BRIDGE connected relay=wss://.../bridge server_id=mcsv-main
-BRIDGE STATUS relay=connected android=connected
-BRIDGE snapshot queued players=1
-VoiceCraft UI ready: /vc
+endstone_voicecraft-0.2.6-py3-none-any.whl
 ```
 
-When an unbound player finishes spawning:
+Remove older `endstone_voicecraft-*.whl` files before installing the new version.
+
+The package entry point remains:
 
 ```text
-BIND FORM shown player=<name> xuid=<xuid>
+voicecraft = endstone_voicecraft:VoiceCraftEndstone
 ```
 
-After a temporary Render restart/redeploy:
+## CI coverage
 
-```text
-BRIDGE disconnected: ...; retrying in 5s
-BRIDGE reconnect attempt=1 relay=wss://.../bridge server_id=mcsv-main
-BRIDGE reconnected relay=wss://.../bridge server_id=mcsv-main
-```
+CI validates:
 
-## `/vc` permissions
+- Endstone 0.11.10 event annotations and plugin loader behavior;
+- final exported class metadata is declared directly in `__dict__`;
+- `/vc` is the only public VoiceCraft command;
+- Bind/Auto Bind/Auto Rebind inheritance;
+- `0.2.6` version and installed-wheel import;
+- multi-relay ordering and Primary-only behavior;
+- relay alert anti-spam state transitions;
+- real protocol-1 `bind`, `unbind`, `unbind_result`, snapshot and reconnect forwarding;
+- bad-secret rejection and Server-ID room isolation;
+- wheel entrypoint/metadata;
+- no `__pycache__` or `.pyc` in the wheel.
 
-```text
-voicecraft.command.menu    default: true
-voicecraft.command.bind    default: true
-voicecraft.command.status  default: true
-voicecraft.command.dump    default: op
-```
+## Compatibility
 
-The menu itself is available to normal players. Admin-only functionality still checks its dedicated permission before displaying tracked player data.
-
-## Protocol contract verified by CI
-
-The 0.2.4 CI validates:
-
-- Endstone `0.11.10` event annotations,
-- `ActionForm`, `ModalForm` and `TextInput` availability,
-- final exported plugin metadata stored directly in `VoiceCraftEndstone.__dict__`,
-- exactly one public command: `/vc`,
-- Auto Bind and Auto Rebind inheritance,
-- pre-spawn filtering,
-- strict Render bridge validation,
-- wheel metadata and entry point,
-- installed-wheel import,
-- real Endstone ↔ Render Relay protocol-1 behavior,
-- Endstone authentication / `hello_ok`,
-- Android mock authentication / `hello_ok`,
-- `peer_status`,
-- `player_state`,
-- `request_snapshot`,
-- `bind` and `bind_result`,
-- `voice_client_disconnected`,
-- Server-ID room isolation,
-- bad-secret rejection,
-- relay restart and Endstone reconnect.
-
-## Current network boundary
-
-Phase 2 solves the **Minecraft state + binding control plane** across the Internet. It does not expose Android's VoiceCraft UDP voice port publicly.
-
-The next networking phase is a public UDP relay/tunnel that preserves separate LiteNetLib peer identities while allowing the Android server to remain behind mobile/CGNAT networks.
+Endstone 0.2.6 does not modify the VoiceCraft v1.7.1 audio protocol. Relay protocol remains `1`, and voice audio is never transported over the Render WebSocket bridge.

@@ -1,0 +1,13 @@
+{
+  "tag": "v1.7.1-android-phase2-ui4.4-endstone0.2.6-relay0.2.1",
+  "title": "VoiceCraft Server Mobile UI4.4 + Endstone 0.2.6 + Relay 0.2.1",
+  "android": {
+    "display_version": "1.7.1-android-phase2-ui4.4",
+    "version_code": 10
+  },
+  "endstone": "0.2.6",
+  "relay": "0.2.1",
+  "protocol": 1,
+  "voicecraft_upstream": "v1.7.1",
+  "voicecraft_upstream_commit": "85aaccccbb58adb23e8c87144e8b1c24bf4b2011"
+}

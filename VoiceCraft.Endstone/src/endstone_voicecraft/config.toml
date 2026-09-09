@@ -10,11 +10,14 @@ min_key_length = 4
 max_key_length = 128
 
 [bridge]
-# Enable after deploying VoiceCraft.Bridge.Relay to Render.
-# UI4.1 Copy Plugin Config generates compatible values.
-# URL path must be exactly /bridge; server_id <= 100 chars; secret >= 16 chars.
+# Primary relay is required. backup_urls is optional and may contain any
+# number of additional relay endpoints. Every relay uses the same server_id
+# and secret. Each relay is tried max_attempts times before failover.
 enabled = false
 url = "wss://YOUR-RELAY.onrender.com/bridge"
+backup_urls = []
 server_id = "mcsv-main"
 secret = "CHANGE_ME_TO_THE_SAME_BRIDGE_SECRET"
 reconnect_seconds = 5
+max_attempts = 5
+peer_timeout_seconds = 30

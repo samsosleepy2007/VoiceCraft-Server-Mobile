@@ -28,6 +28,9 @@ public sealed class VoiceCraftServerService : Service
     public static string? LastError { get; private set; }
     public static string BridgeStatus { get; private set; } = "disabled";
     public static string BridgeLastError { get; private set; } = string.Empty;
+    public static string BridgeActiveRelay { get; private set; } = "Primary";
+    public static int BridgeActiveRelayIndex { get; private set; }
+    public static int BridgeRelayCount { get; private set; } = 1;
     internal static BridgeDashboardSnapshot BridgeDashboard { get; private set; } = BridgeDashboardSnapshot.Empty;
 
     public override IBinder? OnBind(Intent? intent) => null;
@@ -62,6 +65,17 @@ public sealed class VoiceCraftServerService : Service
         var bridgeUrl = ServerPreferences.GetBridgeUrl(this);
         var bridgeServerId = ServerPreferences.GetBridgeServerId(this);
         var bridgeSecret = ServerPreferences.GetBridgeSecret(this);
+        var bridgeRelayUrls = new List<string> { bridgeUrl };
+        foreach (var backup in ServerPreferences.GetBridgeBackupUrls(this))
+        {
+            if (!IsBridgeUrlValid(backup))
+            {
+                AndroidRuntimeLog.Append("BRIDGE", $"Ignoring invalid optional Backup Relay: {SafeBridgeUrl(backup)}");
+                continue;
+            }
+            if (!bridgeRelayUrls.Contains(backup, StringComparer.OrdinalIgnoreCase))
+                bridgeRelayUrls.Add(backup);
+        }
 
         if (!IsValidBridgeConfig(bridgeUrl, bridgeServerId, bridgeSecret))
         {
@@ -79,19 +93,22 @@ public sealed class VoiceCraftServerService : Service
         LastError = null;
         BridgeLastError = string.Empty;
         BridgeStatus = "starting";
+        BridgeActiveRelay = "Primary";
+        BridgeActiveRelayIndex = 0;
+        BridgeRelayCount = bridgeRelayUrls.Count;
         BridgeDashboard = BridgeDashboardSnapshot.Empty;
         AndroidRuntimeLog.Append("SERVICE", $"Starting foreground server on port {port}");
         AndroidRuntimeLog.Append("SERVICE", $"App data: {FilesDir?.AbsolutePath ?? "(unknown)"}");
         AndroidRuntimeLog.Append(
             "BRIDGE",
-            $"Configured required outbound relay={SafeBridgeUrl(bridgeUrl)} server_id={bridgeServerId}; secret hidden");
+            $"Configured Primary relay={SafeBridgeUrl(bridgeUrl)} backups={bridgeRelayUrls.Count - 1} server_id={bridgeServerId}; shared secret hidden");
         AcquireWakeLock();
 
         _notificationCts?.Cancel();
         _notificationCts?.Dispose();
         _notificationCts = new CancellationTokenSource();
         _ = NotificationLoopAsync(port, _notificationCts.Token);
-        _serverTask = Task.Run(() => RunServerAsync(port, key, bridgeUrl, bridgeServerId, bridgeSecret));
+        _serverTask = Task.Run(() => RunServerAsync(port, key, bridgeRelayUrls, bridgeServerId, bridgeSecret));
 
         return StartCommandResult.Sticky;
     }
@@ -119,12 +136,13 @@ public sealed class VoiceCraftServerService : Service
     private async Task RunServerAsync(
         int port,
         string key,
-        string bridgeUrl,
+        IReadOnlyList<string> bridgeRelayUrls,
         string bridgeServerId,
         string bridgeSecret)
     {
         try
         {
+            var bridgeUrl = bridgeRelayUrls.Count > 0 ? bridgeRelayUrls[0] : string.Empty;
             if (!IsValidBridgeConfig(bridgeUrl, bridgeServerId, bridgeSecret))
                 throw new InvalidOperationException("CONFIG_REQUIRED: Render Relay configuration became invalid before runtime startup.");
 
@@ -151,7 +169,7 @@ public sealed class VoiceCraftServerService : Service
                 ServerKey = key
             });
 
-            _bridgeController = new EndstoneBridgeController(bridgeUrl, bridgeServerId, bridgeSecret);
+            _bridgeController = new EndstoneBridgeController(bridgeRelayUrls, bridgeServerId, bridgeSecret);
             _activeBridgeController = _bridgeController;
             _bridgeController.Start();
             BridgeStatus = "starting";
@@ -177,6 +195,9 @@ public sealed class VoiceCraftServerService : Service
             BridgeDashboard = BridgeDashboardSnapshot.Empty;
             BridgeStatus = "disabled";
             BridgeLastError = string.Empty;
+            BridgeActiveRelay = "Primary";
+            BridgeActiveRelayIndex = 0;
+            BridgeRelayCount = 1;
             ServerConsole.Sink = null;
             HttpMcApiServer.DiagnosticLog = null;
             IsServiceRunning = false;
@@ -241,6 +262,9 @@ public sealed class VoiceCraftServerService : Service
                 {
                     BridgeStatus = _bridgeController.Status;
                     BridgeLastError = _bridgeController.LastError;
+                    BridgeActiveRelay = _bridgeController.ActiveRelayName;
+                    BridgeActiveRelayIndex = _bridgeController.ActiveRelayIndex;
+                    BridgeRelayCount = _bridgeController.RelayCount;
                     BridgeDashboard = _bridgeController.DashboardSnapshot;
                 }
 
@@ -248,7 +272,7 @@ public sealed class VoiceCraftServerService : Service
                 var text = LastError != null
                     ? thai ? "เซิร์ฟเวอร์เกิดข้อผิดพลาด — เปิดแอปเพื่อดูสาเหตุ" : "Server error — open app for details"
                     : VcServerApp.IsRunning
-                        ? $"UDP/TCP {port} • Clients {VcServerApp.ConnectedClients} • Bridge {BridgeStatus}"
+                        ? $"UDP/TCP {port} • Clients {VcServerApp.ConnectedClients} • {BridgeActiveRelay} • Bridge {BridgeStatus}"
                         : thai ? $"กำลังเริ่มที่พอร์ต {port}…" : $"Starting on {port}…";
 
                 if (GetSystemService(NotificationService) is NotificationManager manager)

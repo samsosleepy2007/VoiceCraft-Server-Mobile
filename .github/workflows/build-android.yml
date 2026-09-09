@@ -53,6 +53,24 @@ jobs:
       - name: Add Endstone bridge runtime dispatcher
         run: python tools/apply_bridge_runtime.py VoiceCraft.Upstream
 
+      - name: Validate UI4.4 multi-relay and real-unbind source guards
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -q 'MaxAttemptsPerRelay = 5' VoiceCraft.Server.Android/EndstoneBridgeController.cs
+          grep -q 'PeerTimeoutSeconds = 30' VoiceCraft.Server.Android/EndstoneBridgeController.cs
+          grep -q 'BackupRelayActivity' VoiceCraft.Server.Android/ModernMainActivity.cs
+          grep -q 'ExtraBridgeBackupUrls' VoiceCraft.Server.Android/ServerPreferences.cs
+          grep -q 'BridgeUnbindRequest' VoiceCraft.Server.Android/EndstoneBridgeController.cs
+          grep -q 'case "unbind"' VoiceCraft.Server.Android/EndstoneBridgeController.cs
+          grep -q 'type = "unbind_result"' VoiceCraft.Server.Android/EndstoneBridgeController.cs
+          grep -q 'VoiceCraft.DisconnectReason.Kicked' VoiceCraft.Server.Android/EndstoneBridgeController.cs
+          grep -q '_manualUnbindByEntity' VoiceCraft.Server.Android/EndstoneBridgeController.cs
+          grep -q 'appVersion = "1.7.1-android-phase2-ui4.4"' VoiceCraft.Server.Android/EndstoneBridgeController.cs
+          grep -q 'bridgeVersion = "0.2.6"' VoiceCraft.Server.Android/EndstoneBridgeController.cs
+          grep -q 'ApplicationVersion>10<' VoiceCraft.Server.Android/VoiceCraft.Server.Android.csproj
+          grep -q '1.7.1-android-phase2-ui4.4' VoiceCraft.Server.Android/VoiceCraft.Server.Android.csproj
+
       - name: Setup .NET 10
         uses: actions/setup-dotnet@v4
         with:
@@ -89,6 +107,6 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: VoiceCraft-Server-Android-arm64-UI4.2
+          name: VoiceCraft-Server-Android-arm64-UI4.4
           if-no-files-found: error
           path: VoiceCraft.Server.Android/bin/Release/net10.0-android/android-arm64/publish/*.apk

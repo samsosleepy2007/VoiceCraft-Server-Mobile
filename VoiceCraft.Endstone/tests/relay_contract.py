@@ -233,6 +233,37 @@ async def main() -> None:
             assert disconnected.get("xuid") == state["xuid"]
             assert disconnected.get("entityId") == 7
 
+            unbind = {
+                "type": "unbind",
+                "requestId": "contract-unbind-001",
+                "name": state["name"],
+                "xuid": state["xuid"],
+                "uuid": state["uuid"],
+                "entityId": 7,
+            }
+            assert client.send(unbind)
+            received_unbind = await recv_type(android, "unbind")
+            assert received_unbind.get("requestId") == unbind["requestId"]
+            assert received_unbind.get("entityId") == 7
+
+            await android.send_json(
+                {
+                    "type": "unbind_result",
+                    "serverId": SERVER_ID,
+                    "requestId": unbind["requestId"],
+                    "name": state["name"],
+                    "xuid": state["xuid"],
+                    "uuid": state["uuid"],
+                    "success": True,
+                    "reason": "",
+                    "entityId": 7,
+                }
+            )
+            unbind_result = await wait_incoming(client, "unbind_result")
+            assert unbind_result.get("requestId") == unbind["requestId"]
+            assert unbind_result.get("success") is True
+            assert unbind_result.get("entityId") == 7
+
             other = await connect_role(session, "android", server_id="other-room")
             await recv_type(other, "peer_status")
             await recv_type(other, "sync_begin")
@@ -281,7 +312,7 @@ async def main() -> None:
 
         assert any("BRIDGE connected" in line for _, line in logger.lines)
         assert any("BRIDGE reconnect" in line or "BRIDGE reconnected" in line for _, line in logger.lines)
-        print("VoiceCraft Endstone 0.2.3 / Relay / Android protocol-1 contract OK")
+        print("VoiceCraft Endstone 0.2.6 / Relay 0.2.1 / Android protocol-1 contract OK")
     finally:
         client.stop()
         relay.stop()

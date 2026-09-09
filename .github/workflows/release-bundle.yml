@@ -1,0 +1,173 @@
+name: Release VoiceCraft Bundle
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "release-manifest.json"
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+
+    steps:
+      - name: Checkout repository and VoiceCraft v1.7.1 submodule
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Read release manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "RELEASE_TAG=$(jq -r '.tag' release-manifest.json)" >> "$GITHUB_ENV"
+          echo "RELEASE_TITLE=$(jq -r '.title' release-manifest.json)" >> "$GITHUB_ENV"
+          test "$(jq -r '.android.version_code' release-manifest.json)" = "10"
+          test "$(jq -r '.endstone' release-manifest.json)" = "0.2.6"
+          test "$(jq -r '.relay' release-manifest.json)" = "0.2.1"
+          test "$(jq -r '.protocol' release-manifest.json)" = "1"
+          test "$(jq -r '.voicecraft_upstream_commit' release-manifest.json)" = "85aaccccbb58adb23e8c87144e8b1c24bf4b2011"
+
+      - name: Verify pinned upstream version
+        shell: bash
+        run: |
+          test "$(git -C VoiceCraft.Upstream rev-parse HEAD)" = "85aaccccbb58adb23e8c87144e8b1c24bf4b2011"
+
+      - name: Apply Android headless runtime patch
+        run: python tools/apply_phase1.py VoiceCraft.Upstream
+
+      - name: Disable Spectre.Console for Android headless mode
+        run: python tools/apply_android_console_fix.py VoiceCraft.Upstream
+
+      - name: Replace HttpListener with Android TcpListener McHttp
+        run: python tools/apply_android_tcp_mchttp.py VoiceCraft.Upstream
+
+      - name: Add Endstone bridge runtime dispatcher
+        run: python tools/apply_bridge_runtime.py VoiceCraft.Upstream
+
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android API 36
+        shell: bash
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0"
+
+      - name: Install .NET Android workload
+        run: dotnet workload install android
+
+      - name: Restore and publish Android ARM64 APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          dotnet restore VoiceCraft.Server.Android/VoiceCraft.Server.Android.csproj
+          dotnet publish VoiceCraft.Server.Android/VoiceCraft.Server.Android.csproj \
+            -c Release \
+            -r android-arm64 \
+            --no-restore
+          mkdir -p release-assets
+          signed=$(find VoiceCraft.Server.Android/bin/Release/net10.0-android/android-arm64/publish -maxdepth 1 -name '*-Signed.apk' -print -quit)
+          test -n "$signed"
+          cp "$signed" release-assets/VoiceCraft-Server-Mobile-UI4.4-arm64-Signed.apk
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Build Endstone 0.2.6 wheel
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install build
+          python -m compileall -q VoiceCraft.Endstone/src VoiceCraft.Endstone/tests
+          (cd VoiceCraft.Endstone && python -m build --wheel)
+          wheel=$(find VoiceCraft.Endstone/dist -maxdepth 1 -name 'endstone_voicecraft-0.2.6-*.whl' -print -quit)
+          test -n "$wheel"
+          cp "$wheel" release-assets/endstone_voicecraft-0.2.6-py3-none-any.whl
+
+      - name: Validate Relay 0.2.1
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Relay syntax check
+        shell: bash
+        working-directory: VoiceCraft.Bridge.Relay
+        run: |
+          npm install --omit=dev
+          npm run check
+
+      - name: Create checksums and release notes
+        shell: bash
+        run: |
+          set -euo pipefail
+          (cd release-assets && sha256sum * > SHA256SUMS.txt)
+          cat > release-notes.md <<'EOF'
+          ## VoiceCraft Server Mobile UI4.4 bundle
+
+          Production-tested bundle for Minecraft Bedrock VoiceCraft Server Mobile.
+
+          ### Versions
+          - Android: `1.7.1-android-phase2-ui4.4` (version code `10`)
+          - Endstone: `0.2.6`
+          - Render Relay: `0.2.1`
+          - Bridge protocol: `1`
+          - VoiceCraft upstream: `v1.7.1` pinned to `85aaccccbb58adb23e8c87144e8b1c24bf4b2011`
+
+          ### Highlights
+          - Optional Primary + multiple Backup Render relays with ordered 5-attempt failover and circular recovery.
+          - Relay failover does not restart the VoiceCraft UDP runtime or disconnect existing voice clients.
+          - `/vc` can now intentionally disconnect/unbind the actual VoiceCraft client.
+          - Manual unbind is protected by `requestId + entityId`, is never replayed by Relay, and does not trigger Auto Rebind.
+          - Unexpected voice disconnects still trigger the normal 5-second Auto Rebind flow.
+          - In-game Bedrock chat alerts use `§` colors for relay outage, failover, backup success, Primary recovery, and no-backup emergency state.
+          - Relay alert anti-spam prevents reconnect attempts from flooding chat.
+
+          ### Deployment requirement
+          All Primary/Backup Render deployments must use Relay `0.2.1` or newer from this release/source. Older Relay `0.2.0` does not forward `unbind` / `unbind_result`.
+
+          ### Assets
+          - `VoiceCraft-Server-Mobile-UI4.4-arm64-Signed.apk`
+          - `endstone_voicecraft-0.2.6-py3-none-any.whl`
+          - `SHA256SUMS.txt`
+          EOF
+
+      - name: Create or update GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release edit "$RELEASE_TAG" \
+              --target "$GITHUB_SHA" \
+              --title "$RELEASE_TITLE" \
+              --notes-file release-notes.md
+            gh release upload "$RELEASE_TAG" release-assets/* --clobber
+          else
+            gh release create "$RELEASE_TAG" \
+              release-assets/* \
+              --target "$GITHUB_SHA" \
+              --title "$RELEASE_TITLE" \
+              --notes-file release-notes.md \
+              --latest
+          fi

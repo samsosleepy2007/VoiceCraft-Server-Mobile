@@ -42,12 +42,13 @@ jobs:
       - name: Compile plugin source and tests
         run: python -m compileall -q VoiceCraft.Endstone/src VoiceCraft.Endstone/tests
 
-      - name: Validate Endstone API, /vc menu, auto-bind, auto-rebind, spawn filter and bridge config
+      - name: Validate Endstone API, /vc real-unbind, relay alerts and multi-relay failover
         env:
           PYTHONPATH: VoiceCraft.Endstone/src
         run: |
           python - <<'PY'
           import inspect
+          import logging
           from endstone.event import PlayerJoinEvent, PlayerQuitEvent
           from endstone.form import ActionForm, ModalForm, TextInput
           from endstone_voicecraft import VoiceCraftEndstone
@@ -55,6 +56,7 @@ jobs:
           from endstone_voicecraft.auto_rebind import VoiceCraftEndstone as AutoRebindVoiceCraftEndstone
           from endstone_voicecraft.menu import VoiceCraftEndstone as MenuVoiceCraftEndstone
           from endstone_voicecraft.compat import CompatibleEndstoneRelayClient
+          from endstone_voicecraft.failover import MultiRelayEndstoneClient
           from endstone_voicecraft.listener import VoiceCraftListener
           from endstone_voicecraft.model import PlayerState
 
@@ -72,8 +74,10 @@ jobs:
           assert VoiceCraftEndstone is MenuVoiceCraftEndstone
           assert issubclass(MenuVoiceCraftEndstone, AutoRebindVoiceCraftEndstone)
           assert issubclass(AutoRebindVoiceCraftEndstone, AutoBindVoiceCraftEndstone)
-          assert VoiceCraftEndstone.version == "0.2.4"
+          assert VoiceCraftEndstone.version == "0.2.6"
+          assert VoiceCraftEndstone._CHAT_PREFIX == "§6§l[VoiceCraft Server]§r "
           assert CompatibleEndstoneRelayClient is not None
+          assert MultiRelayEndstoneClient is not None
           assert ActionForm is not None and ModalForm is not None and TextInput is not None
 
           # Regression guard: Endstone 0.11 builds PluginDescription from
@@ -102,6 +106,8 @@ jobs:
           assert VoiceCraftEndstone._AUTO_FORM_DELAY_TICKS >= 1
           assert VoiceCraftEndstone._AUTO_FORM_RETRY_TICKS >= 1
           assert VoiceCraftEndstone._RECONNECT_FORM_DELAY_TICKS == 100
+          assert hasattr(AutoRebindVoiceCraftEndstone, "_request_manual_unbind")
+          assert hasattr(AutoRebindVoiceCraftEndstone, "_handle_unbind_result")
 
           good = (True, "wss://voicecraft-server-mobile.onrender.com/bridge", "mcsv-main", "0123456789abcdef0123456789abcdef")
           ok, reason = VoiceCraftEndstone._validate_bridge_config(*good)
@@ -112,14 +118,84 @@ jobs:
           assert not VoiceCraftEndstone._validate_bridge_config(True, "wss://host/bridge", "mcsv-main", "short")[0]
           assert not VoiceCraftEndstone._validate_bridge_config(True, "wss://host/bridge", "x" * 101, "0123456789abcdef")[0]
           assert not VoiceCraftEndstone._validate_bridge_config(True, "wss://YOUR-RELAY.onrender.com/bridge", "mcsv-main", "0123456789abcdef")[0]
-          print("Endstone 0.2.4 /vc menu metadata, auto-bind/rebind, spawn filter, and bridge validation OK")
+
+          logger = logging.getLogger("voicecraft-ci")
+          client = MultiRelayEndstoneClient(
+              logger,
+              [
+                  "wss://primary.example/bridge",
+                  "wss://backup1.example/bridge",
+                  "wss://backup2.example/bridge",
+                  "wss://backup1.example/bridge",
+              ],
+              "mcsv-main",
+              "0123456789abcdef0123456789abcdef",
+              max_attempts=5,
+          )
+          assert client.relay_urls == (
+              "wss://primary.example/bridge",
+              "wss://backup1.example/bridge",
+              "wss://backup2.example/bridge",
+          )
+          assert client.active_relay_index == 0 and client.active_relay_name == "Primary"
+
+          # Alert anti-spam: one outage warning per outage session.
+          client._begin_outage_once("Primary")
+          client._begin_outage_once("Primary")
+          events = client.drain_status_events()
+          assert [event["type"] for event in events] == ["relay_lost"], events
+
+          client._attempts_on_active = 5
+          client._advance_relay()
+          events = client.drain_status_events()
+          assert len(events) == 1 and events[0]["type"] == "failover_started", events
+          assert events[0]["from_index"] == 0 and events[0]["to_index"] == 1, events
+
+          client._mark_paired()
+          events = client.drain_status_events()
+          assert len(events) == 1 and events[0]["type"] == "relay_paired", events
+          assert events[0]["relay_index"] == 1 and events[0]["recovered"] is True, events
+
+          client._advance_relay()
+          assert client.active_relay_index == 2 and client.active_relay_name == "Backup #2"
+          client._advance_relay()
+          assert client.active_relay_index == 0 and client.active_relay_name == "Primary"
+
+          primary_only = MultiRelayEndstoneClient(
+              logger,
+              ["wss://primary.example/bridge"],
+              "mcsv-main",
+              "0123456789abcdef0123456789abcdef",
+              max_attempts=5,
+          )
+          primary_only._begin_outage_once("Primary")
+          primary_only._attempts_on_active = 5
+          primary_only._advance_relay()
+          primary_only._advance_relay()
+          events = primary_only.drain_status_events()
+          assert [event["type"] for event in events] == ["relay_lost", "no_backup"], events
+          assert primary_only.active_relay_index == 0
+          assert primary_only.attempts_on_active == 0
+          print("Endstone 0.2.6 /vc real-unbind, relay alerts, optional multi-relay failover and bridge validation OK")
           PY
+
+      - name: Validate relay 0.2.1 destructive-message guards
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -q '"version": "0.2.1"' VoiceCraft.Bridge.Relay/package.json
+          grep -q 'case "unbind"' VoiceCraft.Bridge.Relay/index.js
+          grep -q 'case "unbind_result"' VoiceCraft.Bridge.Relay/index.js
+          grep -q 'Destructive control messages are intentionally never cached/replayed' VoiceCraft.Bridge.Relay/index.js
+          grep -q 'Number.isInteger(entityId)' VoiceCraft.Bridge.Relay/index.js
+          grep -q 'Disconnect / Unbind Microphone' VoiceCraft.Endstone/src/endstone_voicecraft/menu.py
+          grep -q 'ไม่พบเซิร์ฟเวอร์สำรอง' VoiceCraft.Endstone/src/endstone_voicecraft/menu.py
 
       - name: Install Render relay dependencies
         working-directory: VoiceCraft.Bridge.Relay
         run: npm install --omit=dev
 
-      - name: Run real Endstone protocol-1 / Render relay contract
+      - name: Run real Endstone 0.2.6 / Relay 0.2.1 protocol-1 contract
         env:
           PYTHONPATH: VoiceCraft.Endstone/src
         run: python VoiceCraft.Endstone/tests/relay_contract_021.py
@@ -137,21 +213,23 @@ jobs:
           import zipfile
 
           wheel = glob.glob("dist/*.whl")[0]
-          assert "0.2.4" in wheel, wheel
+          assert "0.2.6" in wheel, wheel
           with zipfile.ZipFile(wheel) as zf:
               names = set(zf.namelist())
               assert "endstone_voicecraft/config.toml" in names, names
               assert "endstone_voicecraft/bridge.py" in names, names
               assert "endstone_voicecraft/compat.py" in names, names
+              assert "endstone_voicecraft/failover.py" in names, names
               assert "endstone_voicecraft/auto_bind.py" in names, names
               assert "endstone_voicecraft/auto_rebind.py" in names, names
               assert "endstone_voicecraft/menu.py" in names, names
               assert "endstone_voicecraft/plugin.py" in names, names
+              assert not any("__pycache__" in name or name.endswith(".pyc") for name in names), names
 
               metadata = [name for name in names if name.endswith(".dist-info/METADATA")]
               assert metadata, names
               metadata_text = zf.read(metadata[0]).decode("utf-8")
-              assert "Version: 0.2.4" in metadata_text, metadata_text
+              assert "Version: 0.2.6" in metadata_text, metadata_text
 
               entry = [name for name in names if name.endswith(".dist-info/entry_points.txt")]
               assert entry, names
@@ -169,26 +247,29 @@ jobs:
           from endstone_voicecraft.auto_rebind import VoiceCraftEndstone as AutoRebindVoiceCraftEndstone
           from endstone_voicecraft.menu import VoiceCraftEndstone as MenuVoiceCraftEndstone
           from endstone_voicecraft.compat import CompatibleEndstoneRelayClient
+          from endstone_voicecraft.failover import MultiRelayEndstoneClient
           from endstone_voicecraft.listener import VoiceCraftListener
 
           assert VoiceCraftEndstone is MenuVoiceCraftEndstone
           assert issubclass(VoiceCraftEndstone, AutoRebindVoiceCraftEndstone)
           assert VoiceCraftEndstone.api_version == "0.11"
-          assert VoiceCraftEndstone.version == "0.2.4"
+          assert VoiceCraftEndstone.version == "0.2.6"
           assert set(VoiceCraftEndstone.__dict__["commands"]) == {"vc"}
           assert "permissions" in VoiceCraftEndstone.__dict__
           assert inspect.signature(VoiceCraftListener.on_player_join).parameters["event"].annotation is PlayerJoinEvent
           assert inspect.signature(VoiceCraftListener.on_player_quit).parameters["event"].annotation is PlayerQuitEvent
           assert CompatibleEndstoneRelayClient is not None
+          assert MultiRelayEndstoneClient is not None
           assert ActionForm is not None and ModalForm is not None and TextInput is not None
           assert VoiceCraftEndstone._extract_binding_key('["Ab3X9"]') == "Ab3X9"
           assert VoiceCraftEndstone._RECONNECT_FORM_DELAY_TICKS == 100
-          print("Endstone 0.2.4 installed wheel import, /vc metadata and auto-rebind entrypoint OK")
+          assert VoiceCraftEndstone._CHAT_PREFIX == "§6§l[VoiceCraft Server]§r "
+          print("Endstone 0.2.6 installed wheel import, /vc metadata, real-unbind, alerts and multi-relay entrypoint OK")
           PY
 
       - name: Upload Endstone wheel
         uses: actions/upload-artifact@v4
         with:
-          name: VoiceCraft-Endstone-Phase2
+          name: VoiceCraft-Endstone-0.2.6
           if-no-files-found: error
           path: VoiceCraft.Endstone/dist/*.whl
