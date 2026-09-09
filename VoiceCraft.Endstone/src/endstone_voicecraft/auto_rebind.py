@@ -13,6 +13,8 @@ class VoiceCraftEndstone(VoiceCraftEndstone022):
 
     version = "0.2.6"
     _RECONNECT_FORM_DELAY_TICKS = 100  # 5 seconds at 20 TPS
+    _UNBIND_TIMEOUT_TICKS = 400  # 20 seconds at 20 TPS
+    _MAX_EXPIRED_UNBINDS = 128
 
     def __init__(self) -> None:
         super().__init__()
@@ -20,6 +22,9 @@ class VoiceCraftEndstone(VoiceCraftEndstone022):
         self._bound_entity_by_player: dict[str, int] = {}
         self._pending_unbind_requests: dict[str, str] = {}
         self._pending_unbind_entities: dict[str, int] = {}
+        # A timed-out destructive request is not assumed to have failed. Keep a
+        # bounded tombstone so a late success can still reconcile local state.
+        self._expired_unbind_requests: dict[str, tuple[str, int]] = {}
         self._manual_unbound_entities: set[int] = set()
 
     def on_disable(self) -> None:
@@ -27,6 +32,7 @@ class VoiceCraftEndstone(VoiceCraftEndstone022):
         self._bound_entity_by_player.clear()
         self._pending_unbind_requests.clear()
         self._pending_unbind_entities.clear()
+        self._expired_unbind_requests.clear()
         self._manual_unbound_entities.clear()
         super().on_disable()
 
@@ -36,6 +42,9 @@ class VoiceCraftEndstone(VoiceCraftEndstone022):
         self._bound_entity_by_player.pop(player_key, None)
         self._pending_unbind_requests.pop(player_key, None)
         self._pending_unbind_entities.pop(player_key, None)
+        for request_id, (expired_player_key, _) in list(self._expired_unbind_requests.items()):
+            if expired_player_key == player_key:
+                self._expired_unbind_requests.pop(request_id, None)
         super().handle_player_quit(player)
 
     def _handle_bind_result(self, message: dict[str, Any]) -> None:
@@ -93,11 +102,53 @@ class VoiceCraftEndstone(VoiceCraftEndstone022):
         self._pending_unbind_requests[player_key] = request_id
         self._pending_unbind_entities[player_key] = entity_id
         self._rebind_waiting.discard(player_key)
+        self._schedule_unbind_timeout(player_key, request_id, entity_id)
         player.send_message("VoiceCraft: disconnect request sent to the mobile server.")
         self.logger.info(
             f"UNBIND requested player={player.name} xuid={player.xuid} entity={entity_id} request={request_id[:8]}"
         )
         return True
+
+    def _remember_expired_unbind(self, request_id: str, player_key: str, entity_id: int) -> None:
+        self._expired_unbind_requests[request_id] = (player_key, entity_id)
+        while len(self._expired_unbind_requests) > self._MAX_EXPIRED_UNBINDS:
+            oldest = next(iter(self._expired_unbind_requests), None)
+            if oldest is None:
+                break
+            self._expired_unbind_requests.pop(oldest, None)
+
+    def _schedule_unbind_timeout(self, player_key: str, request_id: str, entity_id: int) -> None:
+        def callback() -> None:
+            if self._pending_unbind_requests.get(player_key) != request_id:
+                return
+            if self._pending_unbind_entities.get(player_key) != entity_id:
+                return
+
+            self._pending_unbind_requests.pop(player_key, None)
+            self._pending_unbind_entities.pop(player_key, None)
+            self._remember_expired_unbind(request_id, player_key, entity_id)
+
+            player = self._find_online_player(player_key)
+            if player is not None:
+                player.send_error_message(
+                    "VoiceCraft disconnect confirmation timed out. The result is unknown; if your voice client is still connected, retry from /vc after the bridge is healthy."
+                )
+            self.logger.warning(
+                f"UNBIND timeout player_key={player_key[:12]} entity={entity_id} request={request_id[:8]}; late result will still be reconciled"
+            )
+
+        try:
+            self.server.scheduler.run_task(
+                self,
+                callback,
+                delay=self._UNBIND_TIMEOUT_TICKS,
+            )
+        except Exception as exc:
+            # Keep the request pending if the timeout task cannot be scheduled;
+            # silently dropping confirmation tracking would be less safe.
+            self.logger.warning(
+                f"UNBIND timeout schedule failed player_key={player_key[:12]} request={request_id[:8]}: {type(exc).__name__}: {exc}"
+            )
 
     def _drain_bridge_messages(self) -> None:
         if self._bridge is None:
@@ -116,25 +167,49 @@ class VoiceCraftEndstone(VoiceCraftEndstone022):
     def _handle_unbind_result(self, message: dict[str, Any]) -> None:
         player_key = str(message.get("xuid", "") or message.get("uuid", ""))
         request_id = str(message.get("requestId", ""))
-        if not player_key or self._pending_unbind_requests.get(player_key) != request_id:
-            self.logger.info(
-                f"UNBIND stale result ignored player_key={player_key[:12] or '?'} request={request_id[:8] or '?'}"
-            )
+        if not player_key or not request_id:
             return
 
-        entity_id = self._pending_unbind_entities.pop(player_key, None)
-        self._pending_unbind_requests.pop(player_key, None)
+        late_result = False
+        if self._pending_unbind_requests.get(player_key) == request_id:
+            entity_id = self._pending_unbind_entities.pop(player_key, None)
+            self._pending_unbind_requests.pop(player_key, None)
+        else:
+            expired = self._expired_unbind_requests.pop(request_id, None)
+            if expired is None or expired[0] != player_key:
+                self.logger.info(
+                    f"UNBIND stale result ignored player_key={player_key[:12] or '?'} request={request_id[:8] or '?'}"
+                )
+                return
+            entity_id = expired[1]
+            late_result = True
+
         success = bool(message.get("success", False))
         reason = str(message.get("reason", ""))[:160]
         player = self._find_online_player(player_key)
 
         if not success:
-            if player is not None:
+            if player is not None and not late_result:
                 player.send_error_message(f"VoiceCraft disconnect failed: {reason or 'mobile server rejected the request'}")
             self.logger.warning(
-                f"UNBIND failed player_key={player_key[:12]} entity={entity_id} request={request_id[:8]} reason={reason or '-'}"
+                f"UNBIND {'late ' if late_result else ''}failure player_key={player_key[:12]} entity={entity_id} request={request_id[:8]} reason={reason or '-'}"
             )
             return
+
+        current_entity = self._bound_entity_by_player.get(player_key)
+        if entity_id is not None and current_entity is not None and current_entity != entity_id:
+            # A late success for an old entity must never clear a newer binding.
+            self.logger.info(
+                f"UNBIND late success ignored for replaced entity player_key={player_key[:12]} entity={entity_id} current_entity={current_entity} request={request_id[:8]}"
+            )
+            return
+
+        # If the player retried the same entity after a timeout, a late success
+        # from the first request already achieved the desired disconnect. Clear
+        # the newer local pending request too; its later result will be stale.
+        if entity_id is not None and self._pending_unbind_entities.get(player_key) == entity_id:
+            self._pending_unbind_entities.pop(player_key, None)
+            self._pending_unbind_requests.pop(player_key, None)
 
         if entity_id is not None:
             self._manual_unbound_entities.add(entity_id)
@@ -151,9 +226,12 @@ class VoiceCraftEndstone(VoiceCraftEndstone022):
         self._auto_bind_shown.add(player_key)
 
         if player is not None:
-            player.send_message("VoiceCraft: disconnected successfully. Use /vc when you want to bind again.")
+            if late_result:
+                player.send_message("VoiceCraft: disconnect completed after the timeout. Use /vc when you want to bind again.")
+            else:
+                player.send_message("VoiceCraft: disconnected successfully. Use /vc when you want to bind again.")
         self.logger.info(
-            f"UNBIND success player_key={player_key[:12]} entity={entity_id} request={request_id[:8]}; auto-rebind suppressed"
+            f"UNBIND {'late ' if late_result else ''}success player_key={player_key[:12]} entity={entity_id} request={request_id[:8]}; auto-rebind suppressed"
         )
 
     def _handle_voice_client_disconnected(self, message: dict[str, Any]) -> None:
