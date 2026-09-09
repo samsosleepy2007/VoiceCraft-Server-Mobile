@@ -1512,7 +1512,7 @@ public sealed class ModernMainActivity : Activity
         "• ช่องที่ขาดหรือผิดจะเป็นกรอบสีแดง\n\n" +
         "3) Endstone บน MCSV\n" +
         "• ใช้ Endstone 0.11.x\n" +
-        "• อัปโหลด endstone_voicecraft-0.2.5-py3-none-any.whl ไป plugins/\n" +
+        "• อัปโหลด endstone_voicecraft-0.2.6-py3-none-any.whl ไป plugins/\n" +
         "• Start หนึ่งครั้งเพื่อสร้างไฟล์ config\n" +
         "• กดคัดลอก Plugin Config ในแอป แล้วนำไปแทน config.toml\n" +
         "• Restart Minecraft Server แล้วตรวจว่า BRIDGE connected / android=connected\n\n" +
@@ -1550,7 +1550,7 @@ public sealed class ModernMainActivity : Activity
         "• Bridge Secret must exactly match BRIDGE_SECRET on Render.\n" +
         "• Missing or invalid fields are highlighted red.\n\n" +
         "3) Configure Endstone on MCSV\n" +
-        "• Use Endstone 0.11.x and upload endstone_voicecraft-0.2.5-py3-none-any.whl to plugins/.\n" +
+        "• Use Endstone 0.11.x and upload endstone_voicecraft-0.2.6-py3-none-any.whl to plugins/.\n" +
         "• Start once, then replace plugin config.toml with the ready-to-paste config copied from this app.\n" +
         "• Restart Minecraft and verify BRIDGE connected / android=connected.\n\n" +
         "4) Start VoiceCraft Server\n" +

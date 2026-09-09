@@ -48,6 +48,7 @@ internal sealed class EndstoneBridgeController : IAsyncDisposable
     private readonly Dictionary<int, string> _keyByEntity = new();
     private readonly Dictionary<string, int> _boundByPlayer = new(StringComparer.Ordinal);
     private readonly Dictionary<int, string> _playerByEntity = new();
+    private readonly Dictionary<int, BridgeUnbindRequest> _manualUnbindByEntity = new();
     private volatile BridgeDashboardSnapshot _dashboardSnapshot = BridgeDashboardSnapshot.Empty;
     private Task? _runTask;
     private Task? _attachTask;
@@ -94,7 +95,7 @@ internal sealed class EndstoneBridgeController : IAsyncDisposable
     {
         if (_runTask is not null)
             return;
-        AndroidRuntimeLog.Append("BRIDGE", $"Phase 2 UI4.3 starting relays={_relayUris.Count} active={ActiveRelayName} relay={ActiveRelayEndpoint} server_id={_serverId}; secret hidden");
+        AndroidRuntimeLog.Append("BRIDGE", $"Phase 2 UI4.4 starting relays={_relayUris.Count} active={ActiveRelayName} relay={ActiveRelayEndpoint} server_id={_serverId}; secret hidden");
         _attachTask = Task.Run(() => AttachRuntimeAsync(_cts.Token));
         _runTask = Task.Run(() => RunRelayAsync(_cts.Token));
     }
@@ -104,7 +105,7 @@ internal sealed class EndstoneBridgeController : IAsyncDisposable
         QueueOutgoing(new
         {
             type = "request_snapshot",
-            reason = "android-ui4.2"
+            reason = "android-ui4.4"
         });
         AndroidRuntimeLog.Append("BRIDGE", "Requested fresh Endstone player snapshot");
     }
@@ -192,7 +193,14 @@ internal sealed class EndstoneBridgeController : IAsyncDisposable
             _latestStates.TryGetValue(playerKey, out disconnectedPlayer);
         }
 
-        if (disconnectedPlayer is not null)
+        if (_manualUnbindByEntity.Remove(entity.Id, out var manualRequest))
+        {
+            SendUnbindResult(manualRequest, true, string.Empty, entity.Id);
+            AndroidRuntimeLog.Append(
+                "BRIDGE",
+                $"UNBIND completed player={manualRequest.Name} entity={entity.Id} request={ShortId(manualRequest.RequestId)}; auto-rebind event suppressed");
+        }
+        else if (disconnectedPlayer is not null)
         {
             QueueOutgoing(new
             {
@@ -313,6 +321,63 @@ internal sealed class EndstoneBridgeController : IAsyncDisposable
         SendBindResult(request, true, string.Empty, entityId);
     }
 
+    private void HandleManualUnbind(BridgeUnbindRequest request)
+    {
+        if (!_boundByPlayer.TryGetValue(request.PlayerKey, out var currentEntityId))
+        {
+            SendUnbindResult(request, false, "player is not currently bound");
+            return;
+        }
+        if (currentEntityId != request.EntityId)
+        {
+            SendUnbindResult(request, false, $"stale entity id (current={currentEntityId})", currentEntityId);
+            AndroidRuntimeLog.Append(
+                "BRIDGE",
+                $"UNBIND stale request rejected player={request.Name} requested_entity={request.EntityId} current_entity={currentEntityId} request={ShortId(request.RequestId)}");
+            return;
+        }
+        if (_world?.GetEntity(currentEntityId) is not VoiceCraftNetworkEntity entity || entity.Destroyed)
+        {
+            SendUnbindResult(request, false, "voice client entity no longer exists", currentEntityId);
+            return;
+        }
+        var server = entity.NetPeer.Server;
+        if (server is null)
+        {
+            SendUnbindResult(request, false, "voice client server is unavailable", currentEntityId);
+            return;
+        }
+
+        _manualUnbindByEntity[currentEntityId] = request;
+        AndroidRuntimeLog.Append(
+            "BRIDGE",
+            $"UNBIND accepted player={request.Name} entity={currentEntityId} request={ShortId(request.RequestId)}; disconnecting VoiceCraft peer");
+        try
+        {
+            server.Disconnect(entity.NetPeer, "VoiceCraft.DisconnectReason.Kicked");
+        }
+        catch (Exception ex)
+        {
+            _manualUnbindByEntity.Remove(currentEntityId);
+            SendUnbindResult(request, false, $"{ex.GetType().Name}: {ex.Message}", currentEntityId);
+        }
+    }
+
+    private void SendUnbindResult(BridgeUnbindRequest request, bool success, string reason, int? entityId = null)
+    {
+        QueueOutgoing(new
+        {
+            type = "unbind_result",
+            requestId = request.RequestId,
+            xuid = request.Xuid,
+            uuid = request.Uuid,
+            name = request.Name,
+            success,
+            reason,
+            entityId
+        });
+    }
+
     private void HandlePlayerLeave(string playerKey, string name)
     {
         _latestStates.TryRemove(playerKey, out _);
@@ -380,7 +445,7 @@ internal sealed class EndstoneBridgeController : IAsyncDisposable
                     serverId = _serverId,
                     secret = _secret,
                     protocol = 1,
-                    appVersion = "1.7.1-android-phase2-ui4.3"
+                    appVersion = "1.7.1-android-phase2-ui4.4"
                 }, token);
 
                 var helloText = await ReceiveTextAsync(ws, token);
@@ -402,7 +467,7 @@ internal sealed class EndstoneBridgeController : IAsyncDisposable
                     type = "server_status",
                     status = "running",
                     voiceClients = VcServerApp.ConnectedClients,
-                    bridgeVersion = "0.2.5",
+                    bridgeVersion = "0.2.6",
                     activeRelay = relayName,
                     relayIndex = _activeRelayIndex,
                     relayCount = _relayUris.Count
@@ -580,6 +645,13 @@ internal sealed class EndstoneBridgeController : IAsyncDisposable
                 VoiceCraft.Server.RuntimeDispatcher.Post(() => HandleBind(request));
                 break;
             }
+            case "unbind":
+            {
+                if (!BridgeUnbindRequest.TryParse(root, out var request))
+                    return;
+                VoiceCraft.Server.RuntimeDispatcher.Post(() => HandleManualUnbind(request));
+                break;
+            }
             case "sync_end":
                 AndroidRuntimeLog.Append("BRIDGE", $"Endstone state sync received cached_players={_latestStates.Count}");
                 break;
@@ -715,7 +787,7 @@ internal sealed class EndstoneBridgeController : IAsyncDisposable
         if (_attachTask is not null)
             await IgnoreCancellation(_attachTask);
         _cts.Dispose();
-        AndroidRuntimeLog.Append("BRIDGE", "Phase 2 UI4.3 multi-relay controller stopped");
+        AndroidRuntimeLog.Append("BRIDGE", "Phase 2 UI4.4 multi-relay controller stopped");
     }
 
     private sealed record BridgePlayerState(
@@ -760,6 +832,33 @@ internal sealed class EndstoneBridgeController : IAsyncDisposable
             value = 0;
             return root.TryGetProperty(name, out var element) && element.ValueKind == JsonValueKind.Number
                 && element.TryGetSingle(out value);
+        }
+    }
+
+    private sealed record BridgeUnbindRequest(
+        string RequestId,
+        string Name,
+        string Xuid,
+        string Uuid,
+        int EntityId)
+    {
+        public string PlayerKey => !string.IsNullOrWhiteSpace(Xuid) ? Xuid : Uuid;
+
+        public static bool TryParse(JsonElement root, out BridgeUnbindRequest request)
+        {
+            request = null!;
+            var requestId = GetString(root, "requestId");
+            var name = GetString(root, "name");
+            var xuid = GetString(root, "xuid");
+            var uuid = GetString(root, "uuid");
+            if (string.IsNullOrWhiteSpace(requestId) ||
+                (string.IsNullOrWhiteSpace(xuid) && string.IsNullOrWhiteSpace(uuid)) ||
+                !root.TryGetProperty("entityId", out var entityElement) ||
+                entityElement.ValueKind != JsonValueKind.Number ||
+                !entityElement.TryGetInt32(out var entityId))
+                return false;
+            request = new BridgeUnbindRequest(requestId, name, xuid, uuid, entityId);
+            return true;
         }
     }
 

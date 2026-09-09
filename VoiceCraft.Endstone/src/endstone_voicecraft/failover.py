@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import queue
 from typing import Any, Iterable
 
 import aiohttp
@@ -15,6 +16,10 @@ class MultiRelayEndstoneClient(EndstoneRelayClient):
     The current relay is retried up to ``max_attempts`` times. After that the
     client advances to the next configured relay, wrapping back to Primary.
     A relay is considered healthy only after the Android peer is visible.
+
+    Network-thread status transitions are copied into a thread-safe local
+    queue. The Endstone plugin drains that queue on the game/server thread so
+    this class never touches Player or Server objects from its WSS thread.
     """
 
     def __init__(
@@ -25,7 +30,7 @@ class MultiRelayEndstoneClient(EndstoneRelayClient):
         secret: str,
         reconnect_seconds: float = 5.0,
         max_queue: int = 2048,
-        plugin_version: str = "0.2.5",
+        plugin_version: str = "0.2.6",
         max_attempts: int = 5,
         peer_timeout_seconds: float = 30.0,
     ) -> None:
@@ -46,12 +51,16 @@ class MultiRelayEndstoneClient(EndstoneRelayClient):
             max_queue,
         )
         self._urls = tuple(cleaned)
-        self._plugin_version = str(plugin_version or "0.2.5")
+        self._plugin_version = str(plugin_version or "0.2.6")
         self._max_attempts = max(1, int(max_attempts))
         self._peer_timeout_seconds = max(5.0, float(peer_timeout_seconds))
         self._active_index = 0
         self._attempts_on_active = 0
         self._ever_connected = False
+        self._status_events: queue.Queue[dict[str, Any]] = queue.Queue(maxsize=128)
+        self._outage_active = False
+        self._no_backup_announced = False
+        self._paired_relay_index: int | None = None
 
     @property
     def relay_urls(self) -> tuple[str, ...]:
@@ -69,16 +78,85 @@ class MultiRelayEndstoneClient(EndstoneRelayClient):
     def attempts_on_active(self) -> int:
         return self._attempts_on_active
 
+    def drain_status_events(self, limit: int = 64) -> list[dict[str, Any]]:
+        items: list[dict[str, Any]] = []
+        for _ in range(max(1, int(limit))):
+            try:
+                items.append(self._status_events.get_nowait())
+            except queue.Empty:
+                break
+        return items
+
+    def _emit_status(self, kind: str, **values: Any) -> None:
+        payload = {"type": str(kind), **values}
+        try:
+            self._status_events.put_nowait(payload)
+        except queue.Full:
+            try:
+                self._status_events.get_nowait()
+            except queue.Empty:
+                pass
+            try:
+                self._status_events.put_nowait(payload)
+            except queue.Full:
+                pass
+
+    def _begin_outage_once(self, relay_name: str) -> None:
+        if self._outage_active:
+            return
+        self._outage_active = True
+        self._no_backup_announced = False
+        self._paired_relay_index = None
+        self._emit_status(
+            "relay_lost",
+            relay_index=self._active_index,
+            relay_name=relay_name,
+            backup_count=max(0, len(self._urls) - 1),
+        )
+
+    def _mark_paired(self) -> None:
+        if self._paired_relay_index == self._active_index and not self._outage_active:
+            self._attempts_on_active = 0
+            return
+        recovered = self._outage_active
+        self._paired_relay_index = self._active_index
+        self._attempts_on_active = 0
+        self._emit_status(
+            "relay_paired",
+            relay_index=self._active_index,
+            relay_name=self.active_relay_name,
+            recovered=recovered,
+        )
+        self._outage_active = False
+        self._no_backup_announced = False
+
     def _advance_relay(self) -> None:
         if len(self._urls) <= 1:
             self._attempts_on_active = 0
+            if not self._no_backup_announced:
+                self._no_backup_announced = True
+                self._emit_status(
+                    "no_backup",
+                    relay_index=0,
+                    relay_name="Primary",
+                )
             return
-        previous = self.active_relay_name
+
+        previous_index = self._active_index
+        previous_name = self.active_relay_name
         self._active_index = (self._active_index + 1) % len(self._urls)
         self._url = self._urls[self._active_index]
         self._attempts_on_active = 0
+        self._paired_relay_index = None
+        self._emit_status(
+            "failover_started",
+            from_index=previous_index,
+            from_name=previous_name,
+            to_index=self._active_index,
+            to_name=self.active_relay_name,
+        )
         self._logger.warning(
-            f"BRIDGE FAILOVER {previous} -> {self.active_relay_name} "
+            f"BRIDGE FAILOVER {previous_name} -> {self.active_relay_name} "
             f"relay={self._safe_endpoint(self._url)}"
         )
 
@@ -139,7 +217,6 @@ class MultiRelayEndstoneClient(EndstoneRelayClient):
                                 tasks,
                                 return_when=asyncio.FIRST_COMPLETED,
                             )
-                            # Surface watchdog/transport failures immediately.
                             for task in done:
                                 await task
                         finally:
@@ -156,6 +233,7 @@ class MultiRelayEndstoneClient(EndstoneRelayClient):
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
+                self._begin_outage_once(endpoint_name)
                 self._attempts_on_active += 1
                 self._record_error(f"{type(exc).__name__}: {exc}")
                 self._logger.warning(
@@ -176,7 +254,7 @@ class MultiRelayEndstoneClient(EndstoneRelayClient):
             if msg.type == aiohttp.WSMsgType.TEXT:
                 self._handle_incoming_text(msg.data)
                 if self.android_connected:
-                    self._attempts_on_active = 0
+                    self._mark_paired()
             elif msg.type in (
                 aiohttp.WSMsgType.CLOSE,
                 aiohttp.WSMsgType.CLOSED,
@@ -191,7 +269,7 @@ class MultiRelayEndstoneClient(EndstoneRelayClient):
             await asyncio.sleep(2.0)
             if self.android_connected:
                 missing_since = None
-                self._attempts_on_active = 0
+                self._mark_paired()
                 continue
             now = loop.time()
             if missing_since is None:
