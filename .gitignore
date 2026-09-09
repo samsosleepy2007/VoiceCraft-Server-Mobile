@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.pytest_cache/
+.venv/
+venv/
+
+# Python build artifacts
+build/
+dist/
+*.egg-info/
+
+# .NET / Android build artifacts
+bin/
+obj/
+
+# Node
+node_modules/
+
+# Local/editor files
+.vscode/
+.idea/
+.DS_Store
