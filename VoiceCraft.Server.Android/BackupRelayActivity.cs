@@ -246,7 +246,7 @@ public sealed class BackupRelayActivity : Activity
         var view = new TextView(this) { Text = text, TextSize = size };
         view.SetTextColor(color);
         if (bold)
-            view.SetTypeface(Android.Graphics.Typeface.Default, Android.Graphics.TypefaceStyle.Bold);
+            view.SetTypeface(global::Android.Graphics.Typeface.Default, global::Android.Graphics.TypefaceStyle.Bold);
         return view;
     }
 
