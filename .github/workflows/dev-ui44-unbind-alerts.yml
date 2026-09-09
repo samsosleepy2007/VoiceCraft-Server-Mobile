@@ -48,4 +48,4 @@ jobs:
           git commit -m "feat: add real vc unbind and in-game relay alerts"
           git push origin HEAD:multi-relay-auto-failover
 
-      # Triggered intentionally after updating the deterministic wrapper.
+      # Rerun after preserving generated Python escape sequences.
