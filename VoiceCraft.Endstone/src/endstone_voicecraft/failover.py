@@ -131,27 +131,21 @@ class MultiRelayEndstoneClient(EndstoneRelayClient):
                         )
 
                         sender = asyncio.create_task(self._sender_loop(ws))
+                        receiver = asyncio.create_task(self._receiver_loop(ws))
                         peer_watch = asyncio.create_task(self._peer_watchdog(ws))
+                        tasks = {sender, receiver, peer_watch}
                         try:
-                            async for msg in ws:
-                                if self._stop.is_set():
-                                    break
-                                if msg.type == aiohttp.WSMsgType.TEXT:
-                                    self._handle_incoming_text(msg.data)
-                                    if self.android_connected:
-                                        self._attempts_on_active = 0
-                                elif msg.type in (
-                                    aiohttp.WSMsgType.CLOSE,
-                                    aiohttp.WSMsgType.CLOSED,
-                                    aiohttp.WSMsgType.ERROR,
-                                ):
-                                    break
-                                if peer_watch.done():
-                                    await peer_watch
+                            done, _ = await asyncio.wait(
+                                tasks,
+                                return_when=asyncio.FIRST_COMPLETED,
+                            )
+                            # Surface watchdog/transport failures immediately.
+                            for task in done:
+                                await task
                         finally:
-                            sender.cancel()
-                            peer_watch.cancel()
-                            await asyncio.gather(sender, peer_watch, return_exceptions=True)
+                            for task in tasks:
+                                task.cancel()
+                            await asyncio.gather(*tasks, return_exceptions=True)
 
                         if not self._stop.is_set():
                             detail = f"close_code={ws.close_code}"
@@ -174,6 +168,21 @@ class MultiRelayEndstoneClient(EndstoneRelayClient):
                 self._set_state(False, False)
 
             await self._sleep_with_stop(self._reconnect_seconds)
+
+    async def _receiver_loop(self, ws: aiohttp.ClientWebSocketResponse) -> None:
+        async for msg in ws:
+            if self._stop.is_set():
+                return
+            if msg.type == aiohttp.WSMsgType.TEXT:
+                self._handle_incoming_text(msg.data)
+                if self.android_connected:
+                    self._attempts_on_active = 0
+            elif msg.type in (
+                aiohttp.WSMsgType.CLOSE,
+                aiohttp.WSMsgType.CLOSED,
+                aiohttp.WSMsgType.ERROR,
+            ):
+                return
 
     async def _peer_watchdog(self, ws: aiohttp.ClientWebSocketResponse) -> None:
         missing_since: float | None = None
