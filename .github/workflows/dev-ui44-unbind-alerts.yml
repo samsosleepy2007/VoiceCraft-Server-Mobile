@@ -19,7 +19,7 @@ jobs:
           fetch-depth: 0
 
       - name: Apply UI4.4 and Endstone 0.2.6 source patch
-        run: python tools/dev_apply_ui44.py
+        run: python tools/dev_apply_ui44_wrapper.py
 
       - name: Validate patched source syntax and safety guards
         shell: bash
