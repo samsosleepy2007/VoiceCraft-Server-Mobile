@@ -21,7 +21,7 @@ namespace VoiceCraft.Server.Android;
 [Activity(
     Name = "chat.voicecraft.server.ModernMainActivity",
     Label = "VoiceCraft Server",
-    MainLauncher = true,
+    MainLauncher = false,
     Exported = true)]
 public sealed class ModernMainActivity : Activity
 {
@@ -189,6 +189,7 @@ public sealed class ModernMainActivity : Activity
         AddHeaderTool(tools, _thai ? "EN" : "ไทย", ToggleLanguage);
         AddHeaderTool(tools, _dark ? T("สว่าง", "LIGHT") : T("มืด", "DARK"), ToggleTheme);
         AddHeaderTool(tools, "INFO", ShowInformation);
+        AddHeaderTool(tools, T("บัญชี", "ACCOUNT"), () => AccountActivity.LaunchManage(this));
         card.AddView(tools, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MatchParent, Dp(44)));
         outer.AddView(card, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MatchParent, ViewGroup.LayoutParams.MatchParent));
         return outer;
