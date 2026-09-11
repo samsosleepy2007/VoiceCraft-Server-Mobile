@@ -4,12 +4,6 @@ using System.Text.Json;
 
 namespace VoiceCraft.Server.Android;
 
-internal sealed class AccountLoginResult
-{
-    public RegisteredSession Session { get; init; } = new();
-    public bool AdminMfaSetupRequired { get; init; }
-}
-
 internal static class VoiceCraftAccountClient
 {
     private static readonly HttpClient Http = new()
@@ -17,11 +11,10 @@ internal static class VoiceCraftAccountClient
         Timeout = TimeSpan.FromSeconds(15)
     };
 
-    public static async Task<AccountLoginResult> LoginAsync(
+    public static async Task<RegisteredSession> LoginAsync(
         global::Android.Content.Context context,
         string loginName,
         string password,
-        string? otp,
         CancellationToken cancellationToken = default)
     {
         using var response = await Http.PostAsJsonAsync(
@@ -30,9 +23,6 @@ internal static class VoiceCraftAccountClient
             {
                 loginName = loginName.Trim(),
                 password,
-                otp = string.IsNullOrWhiteSpace(otp)
-                    ? null
-                    : otp.Trim(),
                 installationId =
                     LocalInstallationStore.GetOrCreate(context),
                 deviceName =
@@ -102,9 +92,6 @@ internal static class VoiceCraftAccountClient
             LoginName =
                 account.GetProperty("loginName").GetString()
                 ?? loginName.Trim(),
-            Role =
-                account.GetProperty("role").GetString()
-                ?? "NORMAL",
             ExpiresAt = expiresAt
         };
 
@@ -113,16 +100,7 @@ internal static class VoiceCraftAccountClient
                 "Server returned an unusable session.");
 
         RegisteredSessionStore.Save(context, session);
-
-        return new AccountLoginResult
-        {
-            Session = session,
-            AdminMfaSetupRequired =
-                root.TryGetProperty(
-                    "adminMfaSetupRequired",
-                    out var mfa)
-                && mfa.ValueKind == JsonValueKind.True
-        };
+        return session;
     }
 
     public static async Task LogoutAsync(
