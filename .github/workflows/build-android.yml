@@ -8,6 +8,7 @@ on:
       - "VoiceCraft.Upstream"
       - "VoiceCraft.Server.Android/**"
       - "VoiceCraft.Guest.Patch/**"
+      - "supabase/functions/voicecraft-mobile/**"
       - "LICENSE.md"
       - "NOTICE.md"
       - "tools/apply_phase1.py"
@@ -22,6 +23,7 @@ on:
       - "VoiceCraft.Upstream"
       - "VoiceCraft.Server.Android/**"
       - "VoiceCraft.Guest.Patch/**"
+      - "supabase/functions/voicecraft-mobile/**"
       - "LICENSE.md"
       - "NOTICE.md"
       - "tools/apply_phase1.py"
@@ -69,7 +71,7 @@ jobs:
       - name: Apply Open Source / Legal patch
         run: python VoiceCraft.Guest.Patch/apply_legal_compliance_patch.py .
 
-      - name: Validate UI4.5.1 Account V2, Guest and Legal source guards
+      - name: Validate UI4.5.2 mobile account isolation and legal guards
         shell: bash
         run: |
           set -euo pipefail
@@ -78,25 +80,34 @@ jobs:
           test -f VoiceCraft.Server.Android/RegisteredSessionStore.cs
           test -f VoiceCraft.Server.Android/Resources/xml/backup_rules.xml
           test -f VoiceCraft.Server.Android/Resources/xml/data_extraction_rules.xml
+          test -f supabase/functions/voicecraft-mobile/index.ts
           grep -q 'MainLauncher = true' VoiceCraft.Server.Android/AccountGateActivity.cs
           ! grep -R --include='*.cs' -n 'MainLauncher = true' VoiceCraft.Server.Android \
             | grep -v 'AccountGateActivity.cs'
           grep -q 'NoBackupFilesDir' VoiceCraft.Server.Android/KeystoreJsonStore.cs
           grep -q 'AndroidKeyStore' VoiceCraft.Server.Android/KeystoreJsonStore.cs
           grep -q 'AES/GCM/NoPadding' VoiceCraft.Server.Android/KeystoreJsonStore.cs
+          grep -q 'voicecraft-mobile' VoiceCraft.Server.Android/AccountApiConfig.cs
+          ! grep -q 'voicecraft-account' VoiceCraft.Server.Android/AccountApiConfig.cs
           grep -q 'voicecraft-guest' VoiceCraft.Server.Android/AccountApiConfig.cs
+          grep -q 'LoginAsync(this, login, password)' VoiceCraft.Server.Android/RegisteredLoginActivity.cs
+          ! grep -q 'LoginAsync(this, login, password, null)' VoiceCraft.Server.Android/RegisteredLoginActivity.cs
+          ! grep -Eiq 'admin|mfa|otp' VoiceCraft.Server.Android/VoiceCraftAccountClient.cs
+          ! grep -Eiq 'admin|mfa|otp' VoiceCraft.Server.Android/RegisteredLoginActivity.cs
+          ! grep -Eiq 'admin|mfa|otp' VoiceCraft.Server.Android/RegisteredSessionStore.cs
+          ! grep -Eiq 'admin|mfa|otp' VoiceCraft.Server.Android/AccountStatusActivity.cs
+          ! grep -Eiq 'admin|mfa|otp' VoiceCraft.Server.Android/AccountGateActivity.cs
+          ! grep -q 'Role' VoiceCraft.Server.Android/RegisteredSessionStore.cs
+          ! grep -q 'GetProperty("role")' VoiceCraft.Server.Android/VoiceCraftAccountClient.cs
+          ! grep -q 'adminMfaSetupRequired' VoiceCraft.Server.Android/VoiceCraftAccountClient.cs
           grep -q 'OpenAccountCenter' VoiceCraft.Server.Android/ModernMainActivity.cs
           grep -q 'ShowOpenSourceLegal' VoiceCraft.Server.Android/ModernMainActivity.cs
           grep -q 'https://github.com/AvionBlock/VoiceCraft' VoiceCraft.Server.Android/ModernMainActivity.cs
           grep -q 'GPL-3.0' VoiceCraft.Server.Android/ModernMainActivity.cs
           grep -q 'android:allowBackup="false"' VoiceCraft.Server.Android/Properties/AndroidManifest.xml
-          grep -q '<ApplicationVersion>12</ApplicationVersion>' VoiceCraft.Server.Android/VoiceCraft.Server.Android.csproj
-          grep -q '1.7.1-android-phase2-ui4.5.1-account-v2-guest' VoiceCraft.Server.Android/VoiceCraft.Server.Android.csproj
-          grep -q 'appVersion = "1.7.1-android-phase2-ui4.5.1-account-v2-guest"' VoiceCraft.Server.Android/EndstoneBridgeController.cs
-          ! grep -q 'ADMIN OTP' VoiceCraft.Server.Android/RegisteredLoginActivity.cs
-          ! grep -q 'BuildAdminNotice' VoiceCraft.Server.Android/RegisteredLoginActivity.cs
-          ! grep -q 'Role:' VoiceCraft.Server.Android/AccountStatusActivity.cs
-          grep -q 'LoginAsync(this, login, password, null)' VoiceCraft.Server.Android/RegisteredLoginActivity.cs
+          grep -q '<ApplicationVersion>13</ApplicationVersion>' VoiceCraft.Server.Android/VoiceCraft.Server.Android.csproj
+          grep -q '1.7.1-android-phase2-ui4.5.2-account-v2-guest' VoiceCraft.Server.Android/VoiceCraft.Server.Android.csproj
+          grep -q 'appVersion = "1.7.1-android-phase2-ui4.5.2-account-v2-guest"' VoiceCraft.Server.Android/EndstoneBridgeController.cs
 
       - name: Validate multi-relay and real-unbind guards
         shell: bash
@@ -152,6 +163,6 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: VoiceCraft-Server-Android-arm64-UI4.5.1-AccountV2
+          name: VoiceCraft-Server-Android-arm64-UI4.5.2-AccountV2
           if-no-files-found: error
           path: VoiceCraft.Server.Android/bin/Release/net10.0-android/android-arm64/publish/*.apk
