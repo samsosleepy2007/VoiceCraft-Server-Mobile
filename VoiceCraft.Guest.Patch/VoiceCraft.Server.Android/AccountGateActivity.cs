@@ -16,7 +16,6 @@ namespace VoiceCraft.Server.Android;
 public sealed class AccountGateActivity : Activity
 {
     private static readonly Color Primary = Color.Rgb(73, 116, 255);
-    private static readonly Color Primary2 = Color.Rgb(105, 86, 255);
     private static readonly Color Amber = Color.Rgb(245, 158, 11);
 
     private Button? _guestButton;
@@ -31,7 +30,6 @@ public sealed class AccountGateActivity : Activity
     private Color Surface => _dark ? Color.Rgb(22, 30, 48) : Color.White;
     private Color SurfaceSoft => _dark ? Color.Rgb(28, 38, 60) : Color.Rgb(248, 250, 255);
     private Color Tint => _dark ? Color.Rgb(35, 48, 82) : Color.Rgb(237, 242, 255);
-    private Color Tint2 => _dark ? Color.Rgb(45, 38, 80) : Color.Rgb(245, 241, 255);
     private Color Ink => _dark ? Color.Rgb(246, 248, 255) : Color.Rgb(35, 39, 54);
     private Color Muted => _dark ? Color.Rgb(160, 170, 190) : Color.Rgb(116, 124, 145);
     private Color Border => _dark ? Color.Rgb(51, 63, 87) : Color.Rgb(228, 232, 244);
@@ -127,7 +125,7 @@ public sealed class AccountGateActivity : Activity
         _statusCard.AddView(_status, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WrapContent, 1f));
         column.AddView(_statusCard, FullWrap(Dp(12)));
 
-        var footer = Text("VoiceCraft Server Mobile • Account V2", 10, false, Muted);
+        var footer = Text("VoiceCraft Server Mobile", 10, false, Muted);
         footer.Gravity = GravityFlags.Center;
         footer.SetPadding(0, Dp(20), 0, Dp(4));
         column.AddView(footer);
@@ -152,11 +150,10 @@ public sealed class AccountGateActivity : Activity
         };
         top.SetGravity(GravityFlags.CenterVertical);
 
-        var mark = Text("VC", 14, true, Color.White);
-        mark.Gravity = GravityFlags.Center;
-        mark.Background = Round(Primary, 15, Primary);
-        mark.Elevation = Dp(2);
-        top.AddView(mark, new LinearLayout.LayoutParams(Dp(46), Dp(46)));
+        var logo = new ImageView(this);
+        logo.SetImageResource(Resource.Drawable.voicecraft_logo);
+        logo.SetAdjustViewBounds(true);
+        top.AddView(logo, new LinearLayout.LayoutParams(Dp(64), Dp(64)));
 
         var brand = new LinearLayout(this) { Orientation = Orientation.Vertical };
         brand.SetPadding(Dp(12), 0, 0, 0);
@@ -165,14 +162,8 @@ public sealed class AccountGateActivity : Activity
         top.AddView(brand, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WrapContent, 1f));
         card.AddView(top);
 
-        var badge = Text("ACCOUNT V2", 10, true, Primary);
-        badge.Gravity = GravityFlags.Center;
-        badge.Background = Round(Tint, 18, Primary);
-        badge.SetPadding(Dp(12), Dp(6), Dp(12), Dp(6));
-        card.AddView(badge, Wrap(Dp(18), Dp(112)));
-
         var title = Text(T("เลือกวิธีเข้าใช้งาน", "Choose how to continue"), 24, true, Ink);
-        title.SetPadding(0, Dp(14), 0, 0);
+        title.SetPadding(0, Dp(18), 0, 0);
         card.AddView(title);
 
         var subtitle = Text(
@@ -185,19 +176,6 @@ public sealed class AccountGateActivity : Activity
         subtitle.SetLineSpacing(0, 1.12f);
         subtitle.SetPadding(0, Dp(8), 0, 0);
         card.AddView(subtitle);
-
-        var featureRow = new LinearLayout(this)
-        {
-            Orientation = Orientation.Horizontal
-        };
-        featureRow.SetGravity(GravityFlags.CenterVertical);
-        featureRow.SetPadding(0, Dp(18), 0, 0);
-        featureRow.AddView(FeaturePill(T("ปลอดภัย", "SECURE"), Tint, Primary), new LinearLayout.LayoutParams(0, Dp(36), 1f));
-        featureRow.AddView(FeaturePill(T("Guest ในเครื่อง", "LOCAL GUEST"), Tint2, Primary2), new LinearLayout.LayoutParams(0, Dp(36), 1f)
-        {
-            LeftMargin = Dp(8)
-        });
-        card.AddView(featureRow);
 
         return card;
     }
@@ -271,6 +249,7 @@ public sealed class AccountGateActivity : Activity
         var textWrap = new LinearLayout(this) { Orientation = Orientation.Vertical };
         textWrap.SetPadding(Dp(10), 0, 0, 0);
         textWrap.AddView(Text(T("FREE ACCOUNT • เฉพาะอุปกรณ์นี้", "FREE ACCOUNT • THIS DEVICE ONLY"), 11, true, Ink));
+
         var note = Text(
             T(
                 "ข้อมูลจะไม่ถูกเพิ่มในฐานข้อมูลบัญชี VoiceCraft และจะหายถาวรเมื่อ Clear App Data หรือถอนการติดตั้งแอป",
@@ -348,14 +327,6 @@ public sealed class AccountGateActivity : Activity
             _status.Text = message;
     }
 
-    private TextView FeaturePill(string value, Color fill, Color textColor)
-    {
-        var pill = Text(value, 10, true, textColor);
-        pill.Gravity = GravityFlags.Center;
-        pill.Background = Round(fill, 17, fill);
-        return pill;
-    }
-
     private TextView Text(string value, float size, bool bold, Color color)
     {
         var view = new TextView(this)
@@ -411,12 +382,6 @@ public sealed class AccountGateActivity : Activity
 
     private LinearLayout.LayoutParams FullWrap(int top = 0) =>
         new(ViewGroup.LayoutParams.MatchParent, ViewGroup.LayoutParams.WrapContent)
-        {
-            TopMargin = top
-        };
-
-    private LinearLayout.LayoutParams Wrap(int top = 0, int width = ViewGroup.LayoutParams.WrapContent) =>
-        new(width, ViewGroup.LayoutParams.WrapContent)
         {
             TopMargin = top
         };

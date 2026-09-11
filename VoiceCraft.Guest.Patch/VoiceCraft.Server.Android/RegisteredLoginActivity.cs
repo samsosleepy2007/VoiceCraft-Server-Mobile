@@ -17,7 +17,6 @@ namespace VoiceCraft.Server.Android;
 public sealed class RegisteredLoginActivity : Activity
 {
     private static readonly Color Primary = Color.Rgb(73, 116, 255);
-    private static readonly Color Primary2 = Color.Rgb(105, 86, 255);
     private static readonly Color Red = Color.Rgb(239, 68, 68);
 
     private EditText? _login;
@@ -108,11 +107,12 @@ public sealed class RegisteredLoginActivity : Activity
 
         var statusDot = Text("●", 13, true, Primary);
         _statusCard.AddView(statusDot, new LinearLayout.LayoutParams(Dp(24), ViewGroup.LayoutParams.WrapContent));
+
         _status = Text(string.Empty, 12, true, Ink);
         _statusCard.AddView(_status, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WrapContent, 1f));
         column.AddView(_statusCard, FullWrap(Dp(12)));
 
-        var footer = Text("VoiceCraft Server Mobile • Account V2", 10, false, Muted);
+        var footer = Text("VoiceCraft Server Mobile", 10, false, Muted);
         footer.Gravity = GravityFlags.Center;
         footer.SetPadding(0, Dp(20), 0, Dp(4));
         column.AddView(footer);
@@ -135,12 +135,6 @@ public sealed class RegisteredLoginActivity : Activity
 
         row.AddView(new Space(this), new LinearLayout.LayoutParams(0, 1, 1f));
 
-        var badge = Text("ACCOUNT V2", 10, true, Primary);
-        badge.Gravity = GravityFlags.Center;
-        badge.Background = Round(Tint, 18, Primary);
-        badge.SetPadding(Dp(12), 0, Dp(12), 0);
-        row.AddView(badge, new LinearLayout.LayoutParams(Dp(112), Dp(36)));
-
         return row;
     }
 
@@ -154,14 +148,21 @@ public sealed class RegisteredLoginActivity : Activity
         card.Elevation = Dp(3);
         card.SetPadding(Dp(20), Dp(18), Dp(20), Dp(20));
 
-        var mark = Text("VC", 14, true, Color.White);
-        mark.Gravity = GravityFlags.Center;
-        mark.Background = Round(Primary2, 15, Primary2);
-        mark.Elevation = Dp(2);
-        card.AddView(mark, new LinearLayout.LayoutParams(Dp(46), Dp(46)));
+        var logoRow = new LinearLayout(this)
+        {
+            Orientation = Orientation.Horizontal
+        };
+        logoRow.SetGravity(GravityFlags.CenterHorizontal);
+
+        var logo = new ImageView(this);
+        logo.SetImageResource(Resource.Drawable.voicecraft_logo);
+        logo.SetAdjustViewBounds(true);
+        logoRow.AddView(logo, new LinearLayout.LayoutParams(Dp(96), Dp(96)));
+        card.AddView(logoRow, FullWrap());
 
         var title = Text(T("เข้าสู่ระบบ VoiceCraft", "Sign in to VoiceCraft"), 25, true, Ink);
-        title.SetPadding(0, Dp(16), 0, 0);
+        title.Gravity = GravityFlags.CenterHorizontal;
+        title.SetPadding(0, Dp(12), 0, 0);
         card.AddView(title);
 
         var subtitle = Text(
@@ -171,6 +172,7 @@ public sealed class RegisteredLoginActivity : Activity
             13,
             false,
             Muted);
+        subtitle.Gravity = GravityFlags.CenterHorizontal;
         subtitle.SetPadding(0, Dp(7), 0, 0);
         subtitle.SetLineSpacing(0, 1.12f);
         card.AddView(subtitle);
