@@ -8,8 +8,8 @@ README นี้เน้นอธิบายว่าแต่ละระบ�
 
 | Component | Version |
 |---|---|
-| Android app | `1.7.1-android-phase2-ui4.5-account-v2-guest` |
-| Android version code | `11` |
+| Android app | `1.7.1-android-phase2-ui4.5.1-account-v2-guest` |
+| Android version code | `12` |
 | Endstone plugin | `0.2.6` |
 | Render Relay | `0.2.1` |
 | Bridge protocol | `1` |
