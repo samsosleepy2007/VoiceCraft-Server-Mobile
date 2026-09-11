@@ -68,6 +68,12 @@ jobs:
           grep -q '<ApplicationVersion>11</ApplicationVersion>' VoiceCraft.Server.Android/VoiceCraft.Server.Android.csproj
           grep -q '1.7.1-android-phase2-ui4.5-account-v2-guest' VoiceCraft.Server.Android/VoiceCraft.Server.Android.csproj
           grep -q 'appVersion = "1.7.1-android-phase2-ui4.5-account-v2-guest"' VoiceCraft.Server.Android/EndstoneBridgeController.cs
+          ! grep -q 'ADMIN OTP' VoiceCraft.Server.Android/RegisteredLoginActivity.cs
+          ! grep -q 'BuildAdminNotice' VoiceCraft.Server.Android/RegisteredLoginActivity.cs
+          ! grep -q 'Password from administrator' VoiceCraft.Server.Android/RegisteredLoginActivity.cs
+          ! grep -q 'administrator-issued' VoiceCraft.Server.Android/AccountGateActivity.cs
+          ! grep -q 'Role:' VoiceCraft.Server.Android/AccountStatusActivity.cs
+          grep -q 'LoginAsync(this, login, password, null)' VoiceCraft.Server.Android/RegisteredLoginActivity.cs
 
       - name: Validate existing UI4.4 multi-relay and real-unbind guards
         shell: bash

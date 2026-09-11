@@ -216,8 +216,8 @@ public sealed class AccountGateActivity : Activity
 
         var accountText = Text(
             T(
-                "สำหรับบัญชีที่ได้รับจากผู้ดูแลระบบ รวมถึงบัญชี ADMIN ที่ใช้ OTP",
-                "For administrator-issued accounts, including ADMIN accounts that use OTP."),
+                "สำหรับบัญชี VoiceCraft ที่ลงทะเบียนไว้แล้ว",
+                "For registered VoiceCraft accounts."),
             12,
             false,
             Muted);

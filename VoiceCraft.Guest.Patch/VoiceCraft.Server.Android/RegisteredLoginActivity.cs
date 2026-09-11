@@ -19,11 +19,9 @@ public sealed class RegisteredLoginActivity : Activity
     private static readonly Color Primary = Color.Rgb(73, 116, 255);
     private static readonly Color Primary2 = Color.Rgb(105, 86, 255);
     private static readonly Color Red = Color.Rgb(239, 68, 68);
-    private static readonly Color Amber = Color.Rgb(245, 158, 11);
 
     private EditText? _login;
     private EditText? _password;
-    private EditText? _otp;
     private Button? _submit;
     private Button? _free;
     private LinearLayout? _statusCard;
@@ -40,7 +38,6 @@ public sealed class RegisteredLoginActivity : Activity
     private Color Muted => _dark ? Color.Rgb(160, 170, 190) : Color.Rgb(116, 124, 145);
     private Color Border => _dark ? Color.Rgb(51, 63, 87) : Color.Rgb(228, 232, 244);
     private Color DangerFill => _dark ? Color.Rgb(64, 29, 36) : Color.Rgb(255, 242, 244);
-    private Color WarningFill => _dark ? Color.Rgb(66, 49, 22) : Color.Rgb(255, 249, 235);
 
     protected override void OnCreate(Bundle? savedInstanceState)
     {
@@ -99,7 +96,6 @@ public sealed class RegisteredLoginActivity : Activity
         column.AddView(BuildTopBar(), FullWrap());
         column.AddView(BuildHeroCard(), FullWrap(Dp(12)));
         column.AddView(BuildFormCard(), FullWrap(Dp(14)));
-        column.AddView(BuildAdminNotice(), FullWrap(Dp(12)));
 
         _statusCard = new LinearLayout(this)
         {
@@ -137,8 +133,7 @@ public sealed class RegisteredLoginActivity : Activity
         back.Click += (_, _) => Finish();
         row.AddView(back, new LinearLayout.LayoutParams(Dp(92), Dp(40)));
 
-        var spacer = new Space(this);
-        row.AddView(spacer, new LinearLayout.LayoutParams(0, 1, 1f));
+        row.AddView(new Space(this), new LinearLayout.LayoutParams(0, 1, 1f));
 
         var badge = Text("ACCOUNT V2", 10, true, Primary);
         badge.Gravity = GravityFlags.Center;
@@ -171,8 +166,8 @@ public sealed class RegisteredLoginActivity : Activity
 
         var subtitle = Text(
             T(
-                "ใช้บัญชีที่ได้รับจากผู้ดูแลระบบเพื่อเข้าสู่ VoiceCraft Server Mobile",
-                "Use the account issued by your administrator to access VoiceCraft Server Mobile."),
+                "เข้าสู่ระบบด้วยบัญชี VoiceCraft ของคุณเพื่อใช้งาน VoiceCraft Server Mobile",
+                "Sign in with your VoiceCraft account to continue to VoiceCraft Server Mobile."),
             13,
             false,
             Muted);
@@ -203,31 +198,14 @@ public sealed class RegisteredLoginActivity : Activity
         card.AddView(FieldLabel(T("รหัสผ่าน", "Password")), Wrap(Dp(14)));
         _password = Input(
             InputTypes.ClassText | InputTypes.TextVariationPassword,
-            T("รหัสผ่านจากผู้ดูแลระบบ", "Password from administrator"));
-        _password.ImeOptions = ImeAction.Next;
-        card.AddView(_password, Full(Dp(56), Dp(7)));
-
-        var otpRow = new LinearLayout(this)
-        {
-            Orientation = Orientation.Horizontal
-        };
-        otpRow.SetGravity(GravityFlags.CenterVertical);
-        otpRow.SetPadding(0, Dp(14), 0, 0);
-        otpRow.AddView(FieldLabel("ADMIN OTP"), new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WrapContent, 1f));
-        var optional = Text(T("ไม่บังคับ", "OPTIONAL"), 9, true, Muted);
-        optional.Gravity = GravityFlags.Center;
-        optional.Background = Round(SurfaceSoft, 12, Border);
-        otpRow.AddView(optional, new LinearLayout.LayoutParams(Dp(76), Dp(28)));
-        card.AddView(otpRow);
-
-        _otp = Input(InputTypes.ClassNumber, T("OTP 6 หลัก เมื่อระบบร้องขอ", "6-digit OTP if required"));
-        _otp.ImeOptions = ImeAction.Done;
-        _otp.EditorAction += async (_, e) =>
+            T("รหัสผ่านบัญชี VoiceCraft", "VoiceCraft account password"));
+        _password.ImeOptions = ImeAction.Done;
+        _password.EditorAction += async (_, e) =>
         {
             if (e.ActionId == ImeAction.Done && _submit?.Enabled == true)
                 await LoginAsync();
         };
-        card.AddView(_otp, Full(Dp(56), Dp(7)));
+        card.AddView(_password, Full(Dp(56), Dp(7)));
 
         _submit = ActionButton(T("เข้าสู่ระบบ", "LOGIN"), true);
         _submit.Click += async (_, _) => await LoginAsync();
@@ -240,45 +218,10 @@ public sealed class RegisteredLoginActivity : Activity
         return card;
     }
 
-    private View BuildAdminNotice()
-    {
-        var card = new LinearLayout(this)
-        {
-            Orientation = Orientation.Horizontal,
-            Background = Round(WarningFill, 18, _dark ? Color.Rgb(103, 78, 35) : Color.Rgb(247, 213, 139))
-        };
-        card.SetGravity(GravityFlags.Top);
-        card.SetPadding(Dp(14), Dp(13), Dp(14), Dp(13));
-
-        var icon = Text("i", 12, true, Amber);
-        icon.Gravity = GravityFlags.Center;
-        icon.Background = Round(_dark ? Color.Rgb(82, 61, 27) : Color.Rgb(255, 244, 214), 13, Amber);
-        card.AddView(icon, new LinearLayout.LayoutParams(Dp(28), Dp(28)));
-
-        var wrap = new LinearLayout(this) { Orientation = Orientation.Vertical };
-        wrap.SetPadding(Dp(10), 0, 0, 0);
-        wrap.AddView(Text(T("บัญชีถูกสร้างโดยผู้ดูแลระบบ", "ADMINISTRATOR-ISSUED ACCOUNTS"), 11, true, Ink));
-
-        var note = Text(
-            T(
-                "ไม่มีการสมัครบัญชีแบบสาธารณะ บัญชี ADMIN อาจต้องใช้ OTP 6 หลัก และบางบัญชีอาจต้องตั้งค่า MFA ในแอป Admin ก่อน",
-                "There is no public registration. ADMIN accounts may require a 6-digit OTP, and some accounts must finish MFA setup in the Admin app first."),
-            11,
-            false,
-            Muted);
-        note.SetPadding(0, Dp(4), 0, 0);
-        note.SetLineSpacing(0, 1.08f);
-        wrap.AddView(note);
-        card.AddView(wrap, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WrapContent, 1f));
-
-        return card;
-    }
-
     private async Task LoginAsync()
     {
         var login = _login?.Text?.Trim() ?? string.Empty;
         var password = _password?.Text ?? string.Empty;
-        var otp = _otp?.Text?.Trim();
 
         if (login.Length < 3 || password.Length < 12)
         {
@@ -291,16 +234,16 @@ public sealed class RegisteredLoginActivity : Activity
 
         try
         {
-            var result = await VoiceCraftAccountClient.LoginAsync(this, login, password, otp);
+            var result = await VoiceCraftAccountClient.LoginAsync(this, login, password, null);
 
-            if (result.AdminMfaSetupRequired)
+            if (result.AdminMfaSetupRequired || result.Session.Role.ToUpperInvariant() == "ADMIN")
             {
+                RegisteredSessionStore.Delete(this);
                 SetStatus(
                     T(
-                        "บัญชี ADMIN นี้ต้องตั้งค่า MFA ให้เสร็จในแอป VoiceCraft Admin ก่อน",
-                        "This ADMIN account must finish MFA setup in the separate VoiceCraft Admin app."),
+                        "บัญชีนี้ไม่สามารถใช้กับ VoiceCraft Server Mobile ได้",
+                        "This account is not available in VoiceCraft Server Mobile."),
                     false);
-                RegisteredSessionStore.Delete(this);
                 return;
             }
 
@@ -311,12 +254,29 @@ public sealed class RegisteredLoginActivity : Activity
         }
         catch (Exception ex)
         {
-            SetStatus(ex.Message, false);
+            SetStatus(SafeLoginError(ex), false);
         }
         finally
         {
             SetBusy(false);
         }
+    }
+
+    private string SafeLoginError(Exception ex)
+    {
+        var message = ex.Message ?? string.Empty;
+        var lower = message.ToLowerInvariant();
+
+        if (lower.Contains("admin") || lower.Contains("otp") || lower.Contains("mfa"))
+        {
+            return T(
+                "บัญชีนี้ไม่สามารถใช้กับ VoiceCraft Server Mobile ได้",
+                "This account is not available in VoiceCraft Server Mobile.");
+        }
+
+        return string.IsNullOrWhiteSpace(message)
+            ? T("เข้าสู่ระบบไม่สำเร็จ", "Login failed.")
+            : message;
     }
 
     private void SetBusy(bool busy)
@@ -338,8 +298,6 @@ public sealed class RegisteredLoginActivity : Activity
             _login.Enabled = !busy;
         if (_password != null)
             _password.Enabled = !busy;
-        if (_otp != null)
-            _otp.Enabled = !busy;
     }
 
     private void SetStatus(string message, bool info)

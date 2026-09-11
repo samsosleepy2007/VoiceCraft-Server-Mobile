@@ -56,7 +56,6 @@ public sealed class AccountStatusActivity : Activity
             root.AddView(
                 Text(
                     $"{session.LoginName}\n" +
-                    $"Role: {session.Role}\n" +
                     $"Session expires: " +
                     $"{session.ExpiresAt.LocalDateTime:g}",
                     14,
