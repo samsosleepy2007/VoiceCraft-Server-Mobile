@@ -308,9 +308,9 @@ public sealed class AccountActivity : Activity
         var root = new LinearLayout(this)
         {
             Orientation = Orientation.Vertical,
-            Gravity = GravityFlags.Center,
             Background = new ColorDrawable(Color.Rgb(10, 16, 31))
         };
+        root.SetGravity(GravityFlags.Center);
         root.SetPadding(Dp(20), Dp(28), Dp(20), Dp(28));
         return root;
     }
@@ -344,9 +344,9 @@ public sealed class AccountActivity : Activity
         var input = new EditText(this)
         {
             Hint = hint,
-            SingleLine = true,
             Background = Rounded(Color.Rgb(31, 43, 70), 14)
         };
+        input.SetSingleLine(true);
         input.SetTextColor(Color.White);
         input.SetHintTextColor(Color.Rgb(125, 140, 174));
         input.SetPadding(Dp(14), 0, Dp(14), 0);
@@ -360,9 +360,9 @@ public sealed class AccountActivity : Activity
         var button = new Button(this)
         {
             Text = text,
-            AllCaps = false,
             Background = Rounded(primary ? Color.Rgb(73, 116, 255) : Color.Rgb(38, 51, 82), 14)
         };
+        button.SetAllCaps(false);
         button.SetTextColor(Color.White);
         return button;
     }
