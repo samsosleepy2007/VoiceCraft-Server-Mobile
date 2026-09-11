@@ -1,276 +1,861 @@
 # VoiceCraft Server Mobile
 
-Android/mobile host for **VoiceCraft v1.7.1** with an Endstone + Render control-plane bridge for hosted Minecraft Bedrock servers.
+VoiceCraft Server Mobile คือการนำ **VoiceCraft v1.7.1** มาปรับให้สามารถทำงานเป็น VoiceCraft Server บน Android ได้ พร้อมระบบเชื่อมต่อ Minecraft Bedrock ผ่าน **Endstone**, ระบบ **Render Relay** สำหรับ control plane, ระบบ **Primary/Backup Relay failover**, และระบบ **Account / Free Account** สำหรับแอปมือถือ
 
-## Current release
+README นี้เน้นอธิบายว่าแต่ละระบบทำงานอย่างไรและข้อมูลไหลผ่านส่วนต่าง ๆ แบบไหน เพื่อให้สามารถเข้าใจทั้งภาพรวมและรายละเอียดเชิงเทคนิคของโปรเจกต์ได้ในหน้าเดียว
 
-- Android app: **`1.7.1-android-phase2-ui4.5-account-v2-guest`** (version code `11`)
-- Endstone plugin: **`0.2.6`**
-- Render Relay: **`0.2.1`**
-- Render Relay protocol: **`1`**
-- VoiceCraft upstream: **v1.7.1**, pinned to commit `85aaccccbb58adb23e8c87144e8b1c24bf4b2011`
+## เวอร์ชันปัจจุบัน
 
-Download the newest production bundle from the repository **Releases** page.
+| Component | Version |
+|---|---|
+| Android app | `1.7.1-android-phase2-ui4.5-account-v2-guest` |
+| Android version code | `11` |
+| Endstone plugin | `0.2.6` |
+| Render Relay | `0.2.1` |
+| Bridge protocol | `1` |
+| VoiceCraft upstream | `v1.7.1` |
+| Upstream pinned commit | `85aaccccbb58adb23e8c87144e8b1c24bf4b2011` |
 
-> VoiceCraft v1.7.1 wire/audio protocol remains unchanged. Render carries control/state/binding traffic only; voice audio still uses VoiceCraft/LiteNetLib UDP directly to Android.
+> VoiceCraft audio/wire protocol ของต้นฉบับไม่ได้ถูกเปลี่ยน การส่งเสียงยังเป็น VoiceCraft/LiteNetLib UDP โดยตรงไปยัง Android ส่วน Render Relay ใช้สำหรับข้อมูลควบคุม สถานะผู้เล่น และ binding เท่านั้น
 
-## Architecture
+---
+
+# ภาพรวมการทำงาน
+
+ระบบแบ่งออกเป็น 5 ส่วนหลัก
 
 ```text
-Minecraft Bedrock @ MCSV
-        │
-        ▼
-Endstone VoiceCraft 0.2.6
-        │ outbound WSS
-        ▼
-Primary Render Relay ──────┐
-        │                  │ automatic failover
-        │                  ▼
-        │            Backup Relay(s)
-        │ outbound WSS     │
-        └──────────────────┘
-                │
+┌───────────────────────────────┐
+│ Minecraft Bedrock / MCSV      │
+│                               │
+│ Endstone VoiceCraft 0.2.6     │
+│ - อ่านตำแหน่งผู้เล่น           │
+│ - /vc                         │
+│ - Bind / Unbind               │
+└───────────────┬───────────────┘
+                │ WSS control plane
                 ▼
-VoiceCraft Server Mobile UI4.5
+┌───────────────────────────────┐
+│ Render Relay 0.2.1            │
+│                               │
+│ Primary Relay                 │
+│ Backup Relay #1               │
+│ Backup Relay #2 ...           │
+│                               │
+│ - แยก room ด้วย server_id      │
+│ - cache player state          │
+│ - forward control messages    │
+└───────────────┬───────────────┘
+                │ WSS control plane
+                ▼
+┌───────────────────────────────┐
+│ VoiceCraft Server Mobile      │
+│ Android                       │
+│                               │
+│ Account Gate                  │
+│ Foreground Service            │
+│ Endstone Bridge Controller    │
+│ VoiceCraft v1.7.1 Runtime     │
+└───────────────┬───────────────┘
+                │ VoiceCraft UDP
+                ▼
+┌───────────────────────────────┐
+│ VoiceCraft Client             │
+│                               │
+│ - microphone                  │
+│ - Opus audio                  │
+│ - positioning = Server        │
+└───────────────────────────────┘
+```
+
+สิ่งสำคัญคือ **เส้นทางเสียง** และ **เส้นทางข้อมูล Minecraft** แยกออกจากกัน
+
+```text
+เสียงจริง
+VoiceCraft Client ───── UDP ─────> Android VoiceCraft Runtime
+
+ข้อมูล Minecraft / Bind / Relay state
+Minecraft + Endstone ── WSS ──> Render Relay ── WSS ──> Android
+```
+
+ดังนั้น Render ไม่ได้ทำหน้าที่เป็น audio relay ในเวอร์ชันนี้
+
+---
+
+# 1. ระบบ Account และ Free Account
+
+ก่อนเข้าหน้าหลัก แอปจะเปิด `AccountGateActivity` เป็น launcher หลัก
+
+ผู้ใช้มี 2 รูปแบบ
+
+```text
+Registered VoiceCraft Account
+หรือ
+Free Account แบบ local บนอุปกรณ์
+```
+
+## Registered Account
+
+Registered Account ใช้สำหรับ session ของบัญชี VoiceCraft ที่มีอยู่แล้ว
+
+ลำดับโดยย่อ
+
+```text
+เปิดแอป
+  │
+  ▼
+Account Gate
+  │
+  ▼
+Login ด้วย username/password
+  │
+  ▼
+Account API ตรวจสอบข้อมูล
+  │
+  ▼
+บันทึก registered session แบบเข้ารหัสในเครื่อง
+  │
+  ▼
+เข้า VoiceCraft Server Mobile
+```
+
+แอปมือถือไม่ได้เปิด public registration ภายในตัวแอป และไม่ได้แสดงระบบจัดการสิทธิ์ภายในหน้า Login
+
+## Free Account / Guest
+
+Free Account ถูกออกแบบให้เป็นบัญชี local ที่ไม่จำเป็นต้องสร้าง account row ในฐานข้อมูลบัญชีหลัก
+
+เมื่อสร้าง Free Account ครั้งแรก แอปจะสร้าง Guest ID เช่น
+
+```text
+GUEST-xxxxxxxx...
+```
+
+ข้อมูล local ถูกเก็บด้วยหลักการดังนี้
+
+```text
+Guest profile/session
         │
-        ├─ Account V2 / local Free Account gate
-        ├─ VoiceCraft v1.7.1 runtime
-        ├─ LiteNetLib UDP voice server :9050
-        ├─ McHttp TCP compatibility :9050
-        ├─ Minecraft player/entity bridge
-        ├─ Bind / Rebind / real Unbind
-        └─ relay/binding dashboard
+        ▼
+JSON
+        │
+        ▼
+AES-GCM encryption
+        │
+        ▼
+Key จาก Android Keystore
+        │
+        ▼
+NoBackupFilesDir
 ```
 
-## UI4.5 / Account V2 highlights
+ผลลัพธ์คือ
 
-### Account V2 + Free Account
+- ปิดและเปิดแอปใหม่ Guest ID เดิมยังอยู่
+- อัปเดต APK Guest ID เดิมยังอยู่
+- Android cloud backup ไม่ควรย้าย Guest profile ไปเครื่องใหม่
+- Clear App Data จะลบ Guest ID
+- ถอนการติดตั้งแล้วลงใหม่จะได้ Guest ID ใหม่
 
-The Android app now starts at the VoiceCraft account gate.
+ระบบ Guest backend ใช้ session แบบ stateless และแยกออกจากตารางบัญชีหลัก เพื่อไม่ให้ Free Account กลายเป็น account row ปกติ
 
-Two user modes are supported:
+---
 
-- **VoiceCraft Account** — sign in with an existing registered VoiceCraft account.
-- **Free Account** — creates a random `GUEST-...` identity stored only on that Android installation.
+# 2. Android VoiceCraft Server Runtime
 
-Free Account behavior:
+ส่วนสำคัญที่สุดของโปรเจกต์คือการทำให้ VoiceCraft Server ของต้นฉบับสามารถทำงานบน Android แบบ headless ได้
 
-- profile/session data is encrypted with AES-GCM;
-- encryption keys are held in Android Keystore;
-- data is stored under Android `NoBackupFilesDir`;
-- Android cloud backup/device-transfer restore is disabled for the app;
-- force-close, normal restart and APK update keep the same Guest ID;
-- **Clear App Data** or uninstall permanently removes the Guest ID;
-- reinstalling or creating a Free Account after data removal produces a new Guest ID;
-- Guest identities are not inserted into the main VoiceCraft account tables.
-
-The mobile app intentionally exposes only normal account login. Admin OTP/MFA controls and admin-role indicators are not shown in the Android UI.
-
-### Cleaner mobile UI
-
-UI4.5 reorganizes the app for smaller screens and tablets:
-
-- the main header is simplified;
-- Language, Theme, Information and Account controls are moved into **Settings**;
-- crowded three-button rows are replaced by clearer full-width actions where appropriate;
-- Home is focused on server status, address, relay state and player/bind state;
-- Relay setup is grouped into clear Render, Server/Secret and Plugin Config sections;
-- Account Center now follows the same light/dark visual language as the rest of the app;
-- Thai and English remain available.
-
-### Multi-relay automatic failover
-
-- Primary Relay is required.
-- Backup Relays are optional and may be added in any quantity.
-- Android and Endstone use the same ordered relay list.
-- The active relay is retried up to **5 times** with the normal 5-second retry cadence.
-- After 5 failures, selection advances to the next Backup Relay.
-- After the final backup, selection wraps back to Primary.
-- Relay health requires both the WebSocket connection and the opposite peer to be visible.
-- VoiceCraft UDP runtime is not restarted during failover.
-- Existing VoiceCraft clients, entities and completed bindings remain in Android memory while the WSS control plane reconnects.
-
-Recommended deployment for quota/failure isolation:
+VoiceCraft ต้นฉบับถูก pin ไว้เป็น submodule ที่ commit
 
 ```text
-Render Account A
-└─ Primary Relay
-
-Render Account B
-└─ Backup Relay #1
-
-Render Account C (optional)
-└─ Backup Relay #2
+85aaccccbb58adb23e8c87144e8b1c24bf4b2011
 ```
 
-All relay deployments use the same:
+ระหว่าง build ระบบ CI จะ apply Android compatibility patches ก่อนสร้าง APK
+
+ตัวอย่างสิ่งที่ patch เพิ่มหรือเปลี่ยน
+
+- เปิด VoiceCraft Server ในโหมด headless
+- ปิด dependency ของ console UI ที่ไม่เหมาะกับ Android
+- ปรับ McHttp สำหรับ Android ให้ใช้ TCP listener ที่ทำงานได้บน platform นี้
+- เชื่อม Runtime Dispatcher เข้ากับ Android service
+- เพิ่ม Endstone bridge controller
+- เพิ่ม Account / Guest UI และ storage
+
+## Foreground Service
+
+เมื่อผู้ใช้กดเริ่ม Server แอปจะเปิด
 
 ```text
-server_id
-BRIDGE_SECRET
-protocol = 1
+VoiceCraftServerService
 ```
 
-See [`MULTI_RELAY_FAILOVER.md`](MULTI_RELAY_FAILOVER.md) for the full behavior and test checklist.
+เป็น Android Foreground Service
 
-### `/vc` control menu
+service นี้ทำหน้าที่
 
-Endstone exposes one public player command:
+- รัน VoiceCraft server ต่อเนื่องเบื้องหลัง
+- แสดง notification สถานะ server
+- รักษา process ให้เหมาะกับงาน server ระยะยาว
+- ใช้ Partial Wake Lock เพื่อช่วยไม่ให้ CPU หลับระหว่าง server ทำงาน
+- เปิด VoiceCraft runtime
+- เปิด Endstone Bridge Controller
+- อัปเดตจำนวน client / relay state บน notification
+
+ก่อน start จริง ระบบจะตรวจ
+
+```text
+Voice Port
+Server Key
+Primary Relay URL
+Server ID
+Bridge Secret
+```
+
+ถ้า Primary Relay configuration ไม่สมบูรณ์ server จะไม่เริ่ม และจะแสดงสาเหตุให้แก้ก่อน
+
+---
+
+# 3. VoiceCraft Runtime และเส้นทางเสียง
+
+เมื่อ service พร้อม จะเรียก VoiceCraft v1.7.1 runtime โดยตรง
+
+ค่าหลักปัจจุบัน
+
+```text
+Transport mode : McHttp / HTTP compatibility
+Transport host : 0.0.0.0
+Voice UDP port : ค่าเดียวกับ Voice Port
+Default port   : 9050
+```
+
+Android จะเปิดทั้ง VoiceCraft UDP listener และ McHttp compatibility listener ตาม configuration ของ runtime
+
+## เส้นทางเสียง
+
+เสียงไม่ได้วิ่งผ่าน Minecraft, Endstone หรือ Render
+
+```text
+Microphone
+   │
+   ▼
+VoiceCraft Client
+   │
+   │ VoiceCraft / LiteNetLib UDP
+   ▼
+VoiceCraft Server บน Android
+   │
+   ▼
+Voice routing / positioning / effect logic
+   │
+   ▼
+VoiceCraft Client อื่นที่ควรได้ยิน
+```
+
+VoiceCraft Runtime เป็นผู้ตัดสิน routing ของเสียงโดยใช้ entity state ที่ Android ได้รับจาก Minecraft bridge
+
+ดังนั้น Endstone มีหน้าที่ส่ง **สถานะของโลก Minecraft** เข้ามา แต่ไม่ได้ส่ง audio frame
+
+---
+
+# 4. VoiceCraft Entity และ Server Positioning
+
+เมื่อ VoiceCraft Client เชื่อมต่อ Android และใช้
+
+```text
+Positioning Type = Server
+```
+
+Android Bridge Controller จะตรวจพบ `VoiceCraftNetworkEntity` ใหม่
+
+ถ้า entity ยังไม่ bind ระบบจะ
+
+1. สร้าง Binding Key แบบสุ่ม 5 ตัว
+2. ผูก Binding Key กับ VoiceCraft entity ชั่วคราว
+3. เปลี่ยน description ของ client ให้แสดง Binding Key
+4. รอ Minecraft player นำ key นั้นไป bind ผ่าน `/vc`
+
+ตัวอย่างแนวคิด
+
+```text
+Voice Client connects
+      │
+      ▼
+VoiceCraft entity #37
+      │
+      ▼
+Binding Key = aB31x
+      │
+      ▼
+"Welcome! Your binding key is aB31x"
+```
+
+หลัง bind สำเร็จ entity เดิมจะถูกเชื่อมกับ Minecraft player จริง
+
+จากนั้นตำแหน่งของ VoiceCraft entity จะไม่ใช้ตำแหน่งจาก client เอง แต่จะตาม state ที่ Endstone ส่งมา
+
+```text
+Minecraft Player
+X Y Z
+Pitch / Yaw
+Dimension
+Name
+      │
+      ▼
+Endstone
+      │
+      ▼
+Render Relay
+      │
+      ▼
+Android Bridge Controller
+      │
+      ▼
+VoiceCraft Entity
+```
+
+ค่า Minecraft rotation ถูก map เป็น VoiceCraft rotation และ dimension ถูก map เป็น `WorldId`
+
+นี่คือหัวใจที่ทำให้ proximity voice รู้ว่าใครอยู่ใกล้ใครในโลก Minecraft
+
+---
+
+# 5. Endstone Plugin
+
+`VoiceCraft.Endstone` ทำงานอยู่ฝั่ง Minecraft Bedrock server
+
+เวอร์ชันปัจจุบัน
+
+```text
+Endstone plugin 0.2.6
+Validated with Endstone 0.11.10
+```
+
+หน้าที่หลักคือ
+
+- ตรวจผู้เล่นเข้า/ออก
+- อ่านตำแหน่งและ rotation
+- ส่ง player state
+- เปิด UI `/vc`
+- ส่ง bind/unbind request
+- รับผล bind/unbind จาก Android
+- ติดตาม Relay / Android peer state
+- ส่ง snapshot ใหม่เมื่อ Android ขอ
+- ทำ Auto Rebind เมื่อ VoiceCraft Client หลุดแบบไม่ตั้งใจ
+
+## Player State
+
+Endstone ส่งข้อมูลในรูปแบบแนวคิด
+
+```text
+player_state
+├─ xuid / uuid
+├─ player name
+├─ dimension
+├─ x / y / z
+├─ pitch
+└─ yaw
+```
+
+ระบบไม่จำเป็นต้องส่ง state ทุกอย่างแบบไร้เงื่อนไข เพราะมีค่า threshold สำหรับ position/rotation เพื่อลด traffic ที่ไม่จำเป็น
+
+ค่าตั้งต้นตัวอย่าง
+
+```text
+interval_ticks = 2
+position_epsilon = 0.05
+rotation_epsilon = 1.0
+heartbeat_seconds = 30
+```
+
+---
+
+# 6. `/vc` และระบบ Binding
+
+คำสั่งหลักที่ผู้เล่นใช้คือ
 
 ```text
 /vc
 ```
 
-The menu changes with the player's binding state:
+เมนูจะเปลี่ยนตามสถานะ
 
 ```text
-Not bound   → Bind Microphone
-Pending     → Cancel Pending Bind
-Bound       → Disconnect / Unbind Microphone
+ยังไม่ Bind
+   └─ Bind Microphone
+
+กำลัง Bind
+   └─ Cancel Pending Bind
+
+Bind แล้ว
+   └─ Disconnect / Unbind Microphone
 ```
 
-### Real VoiceCraft Unbind
+## Initial Bind
 
-`Disconnect / Unbind Microphone` disconnects the actual VoiceCraft client instead of only clearing local plugin state.
+ลำดับเต็ม
 
 ```text
-Player confirms Disconnect
-        │
-        ▼
-Endstone sends protocol-1 unbind
-(requestId + current entityId)
-        │
-        ▼
-Render Relay forwards only
-(no cache / no replay)
-        │
-        ▼
-Android validates current binding
-        │
-        ▼
-VoiceCraft server disconnects NetPeer
-        │
-        ▼
-Android sends unbind_result
-        │
-        ▼
-Endstone clears binding state
-and suppresses Auto Rebind
+1. VoiceCraft Client ต่อเข้า Android
+2. Android สร้าง VoiceCraft entity
+3. Android สร้าง Binding Key
+4. Client แสดง Binding Key
+5. ผู้เล่นเปิด /vc ใน Minecraft
+6. ผู้เล่นกรอก Binding Key
+7. Endstone สร้าง bind request + requestId
+8. Render ส่ง request ไป Android
+9. Android ตรวจว่า key ยังมีอยู่และยังไม่ถูกใช้
+10. Android ตรวจว่า entity ยังมีชีวิตและใช้ Server positioning
+11. Android map Minecraft player -> VoiceCraft entity
+12. Android apply position/rotation/dimension ล่าสุด
+13. Android ส่ง bind_result กลับ
+14. Endstone เปลี่ยนสถานะผู้เล่นเป็น Bound
 ```
 
-Safety behavior:
+Binding Key เป็น one-use key เมื่อ bind สำเร็จแล้ว key จะถูกนำออกจากรายการ waiting keys
 
-- stale `entityId` requests are rejected by Android;
-- destructive `unbind` messages are never cached/replayed by the Render Relay;
-- manual unbind suppresses the normal unexpected-disconnect Auto Rebind event;
-- a 20-second confirmation timeout prevents `/vc` from remaining stuck in `Disconnecting`;
-- timed-out request tombstones allow a late success to reconcile safely;
-- a late result for an old entity cannot clear a newer binding.
+---
 
-Unexpected VoiceCraft client disconnects still use the normal **5-second Auto Rebind** flow.
+# 7. Manual Unbind ที่ตัด Voice Client จริง
 
-### In-game Relay alerts
+ระบบ Disconnect / Unbind ไม่ใช่แค่ลบสถานะใน Minecraft
 
-Endstone posts relay state changes to players using Bedrock `§` formatting, without emoji.
+มันสั่ง disconnect VoiceCraft NetPeer จริง
 
 ```text
-Red     relay/control plane temporarily unavailable
-Red     Primary exhausted and no Backup Relay is configured
-Yellow  moving to Backup #N / wrapping to Primary
-Green   Backup #N paired successfully / Primary recovered
+Player กด Disconnect
+        │
+        ▼
+Endstone
+สร้าง unbind(requestId, entityId)
+        │
+        ▼
+Render Relay
+forward อย่างเดียว
+        │
+        ▼
+Android
+ตรวจ current entityId
+        │
+        ├─ stale -> reject
+        │
+        └─ valid
+             │
+             ▼
+disconnect VoiceCraft NetPeer
+             │
+             ▼
+entity ถูก destroy
+             │
+             ▼
+unbind_result(success)
+             │
+             ▼
+Endstone clear binding state
 ```
 
-Alerts are session-based so the reconnect loop does not flood Minecraft chat.
+## ทำไมต้องมี entityId
 
-## Required setup
+สมมติผู้เล่นเคย bind entity `20` แล้ว client reconnect กลายเป็น entity `25`
 
-### 1. Install the Android APK
+ถ้า unbind request เก่าของ entity `20` มาถึงช้า ระบบต้องไม่ disconnect entity `25`
 
-Install the signed ARM64 APK from the latest GitHub Release.
-
-On first launch:
-
-1. sign in with an existing VoiceCraft account, or
-2. choose **Create Free Account** for a device-local Guest identity.
-
-### 2. Deploy the Primary Render Relay
-
-Create a Render Web Service from this repository:
+ดังนั้น Android จะตรวจ
 
 ```text
-Root Directory: VoiceCraft.Bridge.Relay
+requested entityId == current bound entityId
+```
+
+ก่อนทำ destructive action ทุกครั้ง
+
+## ทำไม Relay ห้าม replay unbind
+
+`unbind` เป็น destructive control message
+
+Relay จึงตั้งใจ **ไม่ cache และไม่ replay** message นี้
+
+ถ้า Relay เก็บ unbind ไว้แล้วส่งซ้ำหลัง reconnect อาจทำให้ session ใหม่ถูก disconnect โดย request เก่าได้
+
+---
+
+# 8. Unexpected Disconnect และ Auto Rebind
+
+Manual Unbind กับ Unexpected Disconnect ถูกแยกกัน
+
+ถ้า VoiceCraft Client หลุดเอง เช่น
+
+- แอป client ปิด
+- network หลุด
+- UDP/peer session จบ
+
+แต่ Minecraft player ยังอยู่ใน server Android จะส่ง
+
+```text
+voice_client_disconnected
+```
+
+ไปยัง Endstone
+
+Endstone จะ
+
+1. ล้าง bound state เก่า
+2. แจ้งผู้เล่น
+3. รอประมาณ 5 วินาที
+4. เปิด Bind flow ใหม่
+
+แต่ถ้าเป็น **Manual Unbind** Android จะบันทึกว่า entity ถูก disconnect โดยคำสั่งของผู้เล่น และจะ suppress Auto Rebind event เพื่อไม่ให้หน้าต่าง Bind เด้งกลับมาทันที
+
+---
+
+# 9. Render Relay คืออะไร
+
+Render Relay เป็น WebSocket control-plane relay ระหว่าง
+
+```text
+Endstone <-> Android
+```
+
+มันไม่ได้รู้วิธี decode หรือ route VoiceCraft audio
+
+Relay มี endpoint หลัก
+
+```text
+/bridge   WebSocket
+/health   HTTP health/status
+```
+
+## Authentication
+
+เมื่อ WebSocket เชื่อมต่อ ฝั่ง Android และ Endstone ต้องส่ง `hello` ก่อน
+
+ข้อมูลหลัก
+
+```text
+role = android | endstone
+serverId
+secret
+protocol
+```
+
+Relay ตรวจ Bridge Secret แบบ timing-safe comparison
+
+ถ้า hello ไม่มาภายในเวลาที่กำหนดหรือ secret ไม่ถูกต้อง connection จะถูกปิด
+
+## Room isolation
+
+แต่ละ `serverId` มี room ของตัวเอง
+
+```text
+room: mcsv-main
+├─ android connection
+├─ endstone connection
+├─ latest player states
+└─ pending binds
+```
+
+ดังนั้น server คนละ `serverId` จะไม่ควรเห็น state ของกันและกัน
+
+ถ้ามี connection role เดียวกันเข้ามาใหม่ Relay จะใช้ connection ใหม่แทนของเดิม
+
+---
+
+# 10. Relay Cache และ Snapshot Recovery
+
+Render Relay เก็บ cache เฉพาะข้อมูลที่ปลอดภัยต่อการ replay
+
+## ข้อมูลที่ cache
+
+```text
+player_state ล่าสุดของแต่ละ player
+pending bind requests
+```
+
+เมื่อ Android reconnect
+
+```text
+Android reconnect
+      │
+      ▼
+sync_begin
+      │
+      ├─ replay latest player states
+      ├─ replay pending binds
+      │
+      ▼
+sync_end
+      │
+      ▼
+request_snapshot -> Endstone
+```
+
+หลังจากนั้น Endstone จะส่ง snapshot ปัจจุบันเพื่อให้ Android reconcile state อีกครั้ง
+
+## ข้อมูลที่ไม่ cache
+
+```text
+unbind
+```
+
+เพราะเป็น destructive action
+
+Relay จำกัด pending bind cache และมี WebSocket ping/pong heartbeat เพื่อกำจัด connection ที่ตายแล้ว
+
+---
+
+# 11. Primary / Backup Relay Failover
+
+Android และ Endstone รองรับ
+
+```text
+Primary Relay
+Backup Relay #1
+Backup Relay #2
+...
+```
+
+ลำดับเป็นวงกลม
+
+```text
+Primary
+   ↓
+Backup #1
+   ↓
+Backup #2
+   ↓
+Primary
+```
+
+ค่าหลัก
+
+```text
+reconnect_seconds = 5
+max_attempts = 5
+peer_timeout_seconds = 30
+```
+
+## Relay จะถือว่าสุขภาพดีเมื่อ
+
+ไม่ใช่แค่ WebSocket connect สำเร็จ
+
+แต่ต้องเห็น peer อีกฝั่งด้วย
+
+ตัวอย่าง Android
+
+```text
+Android -> Relay connected
+แต่ Relay ไม่เห็น Endstone
+```
+
+ถ้าสถานะนี้นานเกิน `30s` จะถือว่า relay path ใช้งานไม่ได้
+
+## Failover algorithm
+
+```text
+ลอง Primary ครั้งที่ 1
+   ↓ fail
+รอ 5s
+   ↓
+...
+ลอง Primary ครั้งที่ 5
+   ↓ fail
+เปลี่ยนไป Backup #1
+```
+
+ถ้ามี Primary อย่างเดียว ระบบจะเริ่ม retry cycle ของ Primary ใหม่แทนที่จะหยุด VoiceCraft Server
+
+## สิ่งที่สำคัญที่สุด
+
+**Relay failover ไม่ restart VoiceCraft UDP Runtime**
+
+ดังนั้น
+
+```text
+Control plane ขาดชั่วคราว
+        │
+        ├─ WSS reconnect/failover
+        │
+        └─ VoiceCraft UDP runtime ยังทำงาน
+```
+
+VoiceCraft client ที่เชื่อมอยู่ไม่ควรถูกบังคับให้ disconnect เพียงเพราะ Render Relay เปลี่ยนตัว
+
+---
+
+# 12. ข้อความแจ้งเตือนใน Minecraft
+
+เมื่อ control plane มีปัญหา Endstone จะแจ้งผู้เล่นผ่าน Minecraft chat
+
+ใช้ Bedrock formatting code `§` และไม่มี emoji
+
+แนวทางสี
+
+```text
+แดง     ระบบ Relay/Control plane ใช้งานไม่ได้
+เหลือง   กำลัง retry หรือย้ายไป Backup
+เขียว    Backup เชื่อมสำเร็จ หรือ Primary กลับมาทำงาน
+```
+
+ระบบมี anti-spam state เพื่อไม่ส่งข้อความ outage ซ้ำทุก 5 วินาทีระหว่าง retry
+
+---
+
+# 13. Android UI ทำหน้าที่อะไร
+
+UI ไม่ใช่ตัว VoiceCraft protocol เอง แต่เป็น control surface ของ Android service
+
+หน้าหลักถูกแบ่งให้ใช้งานง่ายขึ้นเป็น
+
+```text
+ภาพรวม
+Relay
+Start / Stop
+Logs
+Settings
+```
+
+Settings รวมเมนู application-level เช่น
+
+- ภาษา
+- Theme
+- Information / Guide
+- Account
+- Voice Port
+- Server Key
+
+Relay page ใช้ตั้ง
+
+- Primary Render URL
+- Backup Relay URLs
+- Server ID
+- Bridge Secret
+- Plugin configuration
+
+แอปจะแปลง Render service URL เช่น
+
+```text
+https://voicecraft-main.onrender.com
+```
+
+เป็น
+
+```text
+wss://voicecraft-main.onrender.com/bridge
+```
+
+สำหรับ Bridge connection
+
+---
+
+# 14. Security Model
+
+## Bridge Secret
+
+Primary และ Backup Relay ทุกตัวต้องใช้ Bridge Secret เดียวกับ Android และ Endstone ของ server นั้น
+
+```text
+Android
+Endstone
+Primary Relay
+Backup Relay(s)
+        │
+        └── same Bridge Secret
+```
+
+Bridge Secret ไม่ควรถูก commit ลง public repository
+
+## Guest local storage
+
+Free Account ใช้
+
+- Android Keystore
+- AES-GCM
+- `NoBackupFilesDir`
+- Android backup exclusion
+
+## Runtime logs
+
+ค่าที่เป็น secret เช่น Server Key / Bridge Secret / Binding Key จะไม่ถูกเขียนแบบ plaintext ลง runtime log ตาม flow ปกติ
+
+## Unbind safety
+
+- ต้องมี `requestId`
+- ต้องมี `entityId`
+- Android ตรวจ entity ปัจจุบัน
+- Relay ไม่ replay destructive unbind
+
+---
+
+# 15. ตารางเส้นทางข้อมูล
+
+| Data | Source | Path | Destination | Transport |
+|---|---|---|---|---|
+| Voice audio | VoiceCraft Client | Direct | Android VoiceCraft Runtime | UDP / LiteNetLib |
+| Player position | Minecraft | Endstone → Relay → Android | VoiceCraft Entity | WSS JSON |
+| Rotation | Minecraft | Endstone → Relay → Android | VoiceCraft Entity | WSS JSON |
+| Dimension | Minecraft | Endstone → Relay → Android | VoiceCraft Entity | WSS JSON |
+| Bind request | `/vc` | Endstone → Relay → Android | Bridge Controller | WSS JSON |
+| Bind result | Android | Android → Relay → Endstone | `/vc` state | WSS JSON |
+| Unbind request | `/vc` | Endstone → Relay → Android | VoiceCraft NetPeer | WSS JSON |
+| Relay health | Relay | peer_status | Android / Endstone | WSS JSON |
+| Player snapshot | Endstone | Relay | Android | WSS JSON |
+
+---
+
+# 16. การติดตั้งโดยย่อ
+
+## Render Relay
+
+สร้าง Render Web Service จาก directory
+
+```text
+VoiceCraft.Bridge.Relay
+```
+
+ค่าหลัก
+
+```text
 Runtime: Node
 Build Command: npm install --omit=dev
 Start Command: npm start
 Health Check Path: /health
 ```
 
-Environment variable:
+Environment
 
 ```text
-BRIDGE_SECRET=<strong-random-secret-at-least-16-characters>
+BRIDGE_SECRET=<strong secret อย่างน้อย 16 ตัวอักษร>
 ```
 
-A normal service URL such as:
+Backup Relay ใช้ source เดียวกันและ secret เดียวกัน
 
-```text
-https://voicecraft-main.onrender.com
-```
+## Android
 
-is converted by Android to:
-
-```text
-wss://voicecraft-main.onrender.com/bridge
-```
-
-### 3. Deploy optional Backup Relays
-
-Deploy the same `VoiceCraft.Bridge.Relay` source on each backup and use the **same `BRIDGE_SECRET`**.
-
-```text
-Primary   https://voicecraft-main.onrender.com
-Backup #1 https://voicecraft-backup1.onrender.com
-Backup #2 https://voicecraft-backup2.onrender.com
-```
-
-### 4. Configure Android Relay settings
-
-Open **Relay** and configure:
+ตั้งค่า
 
 ```text
 Primary Render Service URL
-Server ID      (default: mcsv-main)
-Bridge Secret  (same value as every Render BRIDGE_SECRET)
+Backup Relay URLs (optional)
+Server ID
+Bridge Secret
+Voice Port
+Server Key
 ```
 
-Use **Manage Backup Relays** for optional backups. Primary-only configuration is valid.
+## Endstone
 
-### 5. Install Endstone 0.2.6
-
-Use Endstone `0.11.x` on the Minecraft Bedrock host and install:
+ติดตั้ง
 
 ```text
 endstone_voicecraft-0.2.6-py3-none-any.whl
 ```
 
-Remove older `endstone_voicecraft-*.whl` files before installing the new wheel.
+ลบ wheel รุ่นเก่าก่อน
 
-Generate the Endstone config from Android after Relay settings are configured.
+Android สามารถสร้าง Plugin Config ที่พร้อมนำไปใช้ใน Endstone ได้
 
-Example:
+ตัวอย่าง bridge config
 
 ```toml
-[tracking]
-interval_ticks = 2
-position_epsilon = 0.05
-rotation_epsilon = 1.0
-log_position_changes = false
-heartbeat_seconds = 30
-
-[binding]
-min_key_length = 4
-max_key_length = 128
-
 [bridge]
 enabled = true
 url = "wss://voicecraft-main.onrender.com/bridge"
@@ -278,119 +863,180 @@ backup_urls = [
   "wss://voicecraft-backup1.onrender.com/bridge"
 ]
 server_id = "mcsv-main"
-secret = "THE_SAME_SECRET_USED_BY_ANDROID_AND_EVERY_RELAY"
+secret = "SAME_SECRET_AS_ANDROID_AND_RELAY"
 reconnect_seconds = 5
 max_attempts = 5
 peer_timeout_seconds = 30
 ```
 
-### 6. Start VoiceCraft Server Mobile
+## VoiceCraft Client
 
-Use the center **Start** button in the Android bottom navigation.
-
-Before startup, Android validates the Relay URL, generated WebSocket URL, Server ID, Bridge Secret and Voice/McHttp port.
-
-Default voice/McHttp port:
-
-```text
-9050
-```
-
-### 7. Connect a VoiceCraft client
-
-For LAN testing:
+สำหรับ LAN test
 
 ```text
 <ANDROID_LAN_IP>:9050
 ```
 
-Set positioning mode to **Server**.
-
-After the client receives its one-use Binding Key, join Minecraft and run:
+และตั้ง
 
 ```text
-/vc
+Positioning Type = Server
 ```
 
-## Relay protocol additions
+จากนั้นใช้ Binding Key ที่ client แสดงกับ `/vc` ใน Minecraft
 
-Protocol number remains **1**.
+---
 
-Endstone → Android:
+# 17. โครงสร้าง Repository
 
 ```text
-player_state
-player_leave
-bind
-unbind
-heartbeat
-sync_begin / sync_end
+VoiceCraft.Upstream/
+└─ VoiceCraft v1.7.1 ต้นฉบับที่ pin commit ไว้
+
+VoiceCraft.Server.Android/
+├─ Android UI
+├─ Foreground Service
+├─ Endstone Bridge Controller
+├─ Runtime diagnostics
+└─ Server preferences
+
+VoiceCraft.Guest.Patch/
+├─ Account Gate
+├─ Registered Account session
+├─ Free/Guest Account storage
+├─ Android Keystore encryption
+└─ build-time patch script
+
+VoiceCraft.Endstone/
+├─ Endstone plugin
+├─ /vc UI
+├─ player tracking
+├─ bind/unbind logic
+└─ relay client
+
+VoiceCraft.Bridge.Relay/
+└─ Node.js WebSocket relay
+
+supabase/
+├─ Account/Guest backend components
+└─ migrations/functions used by account layer
+
+tools/
+└─ Android compatibility/build patches
 ```
 
-Android → Endstone:
+---
+
+# 18. CI และ Release
+
+Android build pipeline ทำงานโดยประมาณ
 
 ```text
-bind_result
-unbind_result
-request_snapshot
-server_status
-voice_client_disconnected
+Checkout repository
+      │
+      ▼
+Checkout pinned VoiceCraft upstream
+      │
+      ▼
+Apply Android headless patches
+      │
+      ▼
+Apply McHttp Android compatibility
+      │
+      ▼
+Apply Endstone bridge runtime
+      │
+      ▼
+Apply Account / Guest patch
+      │
+      ▼
+Source guards
+      │
+      ▼
+.NET 10 Android ARM64 build
+      │
+      ▼
+Signed APK artifact
 ```
 
-The Render Relay never transports VoiceCraft audio.
+Release workflow ยัง build Endstone wheel, ตรวจ Relay syntax และสร้าง `SHA256SUMS.txt`
 
-## Security notes
+---
 
-- Use `wss://` for deployed Render connections.
-- Never commit the shared Bridge Secret to a public repository.
-- Use the same Bridge Secret on Primary and backups for seamless failover.
-- If a Relay is compromised, rotate the secret consistently on every Relay, Android and Endstone.
-- Binding Keys and Bridge Secrets are hidden from normal runtime logs.
-- Free Account files use encrypted local storage and are excluded from Android backup/restore.
-- Guest signing uses the separate `voicecraft-guest` backend and does not create normal account records.
+# 19. ข้อจำกัดปัจจุบัน
 
-## CI / verification
+Render Relay ในเวอร์ชันนี้เป็น **control plane เท่านั้น**
 
-The repository validates:
-
-- pinned VoiceCraft v1.7.1 upstream commit;
-- Android UI4.5 / Account V2 source guards;
-- Guest local-storage hardening (`NoBackupFilesDir`, Android Keystore, AES-GCM);
-- exactly one Android launcher (`AccountGateActivity`);
-- no admin OTP/admin-role UI in the mobile login flow;
-- full Android ARM64 `dotnet build` and `dotnet publish`;
-- Endstone 0.11.x compatibility and wheel packaging;
-- ordered/circular multi-relay behavior and Primary-only behavior;
-- Relay alert anti-spam transitions;
-- protocol-1 `bind`, `unbind`, `unbind_result`, snapshot and reconnect forwarding;
-- destructive unbind forwarding with **no replay after Android reconnect**.
-
-## Release assets
-
-The production release workflow publishes:
+ดังนั้นสำหรับผู้เล่นนอก LAN หรือกรณี Android อยู่หลัง CGNAT เส้นทาง UDP ยังเป็นข้อจำกัดหลัก
 
 ```text
-VoiceCraft-Server-Mobile-UI4.5-AccountV2-arm64-Signed.apk
-endstone_voicecraft-0.2.6-py3-none-any.whl
-SHA256SUMS.txt
+Control plane
+Minecraft -> Render -> Android
+ใช้งานผ่าน Internet ได้
+
+Voice audio
+Voice Client -> UDP -> Android
+ยังต้องเข้าถึง Android UDP endpoint ได้
 ```
 
-## Current limitation / roadmap
-
-Render WSS is the control plane only. Voice audio is still direct UDP to Android.
-
-The next major networking phase is a public UDP relay/tunnel for remote users and CGNAT environments:
+แนวทาง phase ถัดไปคือ Public UDP Relay / Tunnel
 
 ```text
-VoiceCraft clients --UDP--> Public UDP relay/VPS
-                              │
-                              │ authenticated tunnel
-                              ▼
-                       Android Tunnel Agent
-                              │
-                       127.0.0.1:9050
-                              ▼
-                    VoiceCraft v1.7.1 runtime
+VoiceCraft Client
+      │ UDP
+      ▼
+Public UDP Relay / VPS
+      │ authenticated tunnel
+      ▼
+Android Tunnel Agent
+      │
+      ▼
+127.0.0.1:9050
+      │
+      ▼
+VoiceCraft Runtime
 ```
 
-Render WSS should remain the control plane; VoiceCraft audio should not be tunneled through Render WebSockets.
+Render WSS ควรยังคงเป็น control plane ไม่ควรนำ voice audio ไป tunnel ผ่าน Render WebSocket
+
+---
+
+# เครดิต VoiceCraft ต้นฉบับ
+
+โปรเจกต์นี้สร้างต่อยอดจาก **VoiceCraft** ของ **AvionBlock** และไม่ได้อ้างว่า VoiceCraft protocol/runtime ต้นฉบับถูกสร้างโดยโปรเจกต์นี้
+
+## Original Project
+
+- **VoiceCraft by AvionBlock:** https://github.com/AvionBlock/VoiceCraft
+- **Primary upstream development repository:** https://gitlab.avion.team/voicecraft/VoiceCraft
+- **Official documentation:** https://docs.voicecraft.chat
+- **GitHub contributors:** https://github.com/AvionBlock/VoiceCraft/graphs/contributors
+
+VoiceCraft ต้นฉบับอธิบายตัวเองว่าเป็น proximity voice platform ที่ประกอบด้วย client, standalone server, Minecraft integrations และ API/transports หลายรูปแบบ โปรเจกต์ Server Mobile นี้ใช้ VoiceCraft v1.7.1 เป็น runtime หลัก แล้วเพิ่ม Android hosting, Endstone bridge, Render failover และ account layer รอบ runtime เดิม
+
+## รายชื่อเครดิตจาก VoiceCraft ต้นฉบับ
+
+รายชื่อด้านล่างอ้างอิงจาก `CreditsViewModel` ของ VoiceCraft upstream v1.7.1 โดยตรง
+
+| Name | Role ใน VoiceCraft ต้นฉบับ |
+|---|---|
+| **SineVector241** | Author, Programmer |
+| **Miniontoby** | Translator, Programmer |
+| **Unny** | Translator |
+| **AlphaMSq** | Translator, Programmer |
+| **R JustGuyz** | Translator |
+
+นอกจากนี้ GitHub release/history ของ VoiceCraft ยังมี contributors อื่น ๆ เช่น **lil-jon-crunk** และผู้มีส่วนร่วมในแต่ละ release จึงควรดู Contributors/commit history ของ upstream สำหรับรายชื่อที่อัปเดตครบที่สุด
+
+ขอขอบคุณทีม VoiceCraft และ contributors ทุกคนที่สร้าง protocol, server runtime, client, network layer และระบบต่าง ๆ ที่เป็นรากฐานของโปรเจกต์นี้
+
+---
+
+# License / Attribution
+
+VoiceCraft ต้นฉบับเผยแพร่ภายใต้ **GNU General Public License v3.0 (GPL-3.0)** โปรดตรวจสอบ license และเงื่อนไขของ upstream ก่อนนำ source หรือ binary ที่เกี่ยวข้องไปแจกจ่ายหรือแก้ไขต่อ
+
+- Upstream license: https://github.com/AvionBlock/VoiceCraft/blob/master/LICENSE.md
+- Upstream repository: https://github.com/AvionBlock/VoiceCraft
+
+ส่วนที่พัฒนาต่อยอดใน repository นี้ควรถูกใช้งานโดยคำนึงถึง attribution และ license ของ VoiceCraft ต้นฉบับเสมอ
