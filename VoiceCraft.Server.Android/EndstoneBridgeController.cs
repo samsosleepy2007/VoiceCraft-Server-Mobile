@@ -445,7 +445,7 @@ internal sealed class EndstoneBridgeController : IAsyncDisposable
                     serverId = _serverId,
                     secret = _secret,
                     protocol = 1,
-                    appVersion = "1.7.1-android-phase2-ui4.4"
+                    appVersion = "1.7.1-android-phase2-ui4.5"
                 }, token);
 
                 var helloText = await ReceiveTextAsync(ws, token);
