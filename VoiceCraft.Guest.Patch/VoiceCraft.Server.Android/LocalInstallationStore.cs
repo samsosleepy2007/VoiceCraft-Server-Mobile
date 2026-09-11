@@ -5,7 +5,7 @@ internal static class LocalInstallationStore
     private const string FileName = "voicecraft_installation_id.txt";
     private static readonly object Sync = new();
 
-    public static string GetOrCreate(Android.Content.Context context)
+    public static string GetOrCreate(global::Android.Content.Context context)
     {
         lock (Sync)
         {
