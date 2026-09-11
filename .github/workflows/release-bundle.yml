@@ -27,7 +27,8 @@ jobs:
           set -euo pipefail
           echo "RELEASE_TAG=$(jq -r '.tag' release-manifest.json)" >> "$GITHUB_ENV"
           echo "RELEASE_TITLE=$(jq -r '.title' release-manifest.json)" >> "$GITHUB_ENV"
-          test "$(jq -r '.android.version_code' release-manifest.json)" = "10"
+          test "$(jq -r '.android.display_version' release-manifest.json)" = "1.7.1-android-phase2-ui4.5-account-v2-guest"
+          test "$(jq -r '.android.version_code' release-manifest.json)" = "11"
           test "$(jq -r '.endstone' release-manifest.json)" = "0.2.6"
           test "$(jq -r '.relay' release-manifest.json)" = "0.2.1"
           test "$(jq -r '.protocol' release-manifest.json)" = "1"
@@ -36,6 +37,7 @@ jobs:
       - name: Verify pinned upstream version
         shell: bash
         run: |
+          set -euo pipefail
           test "$(git -C VoiceCraft.Upstream rev-parse HEAD)" = "85aaccccbb58adb23e8c87144e8b1c24bf4b2011"
 
       - name: Apply Android headless runtime patch
@@ -49,6 +51,31 @@ jobs:
 
       - name: Add Endstone bridge runtime dispatcher
         run: python tools/apply_bridge_runtime.py VoiceCraft.Upstream
+
+      - name: Apply Guest / Account V2 patch
+        run: python VoiceCraft.Guest.Patch/apply_guest_account_patch.py .
+
+      - name: Validate release source guards
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -q 'MainLauncher = true' VoiceCraft.Server.Android/AccountGateActivity.cs
+          ! grep -R --include='*.cs' -n 'MainLauncher = true' VoiceCraft.Server.Android \
+            | grep -v 'AccountGateActivity.cs'
+          grep -q 'NoBackupFilesDir' VoiceCraft.Server.Android/KeystoreJsonStore.cs
+          grep -q 'AndroidKeyStore' VoiceCraft.Server.Android/KeystoreJsonStore.cs
+          grep -q 'AES/GCM/NoPadding' VoiceCraft.Server.Android/KeystoreJsonStore.cs
+          grep -q 'android:allowBackup="false"' VoiceCraft.Server.Android/Properties/AndroidManifest.xml
+          grep -q '<ApplicationVersion>11</ApplicationVersion>' VoiceCraft.Server.Android/VoiceCraft.Server.Android.csproj
+          grep -q '1.7.1-android-phase2-ui4.5-account-v2-guest' VoiceCraft.Server.Android/VoiceCraft.Server.Android.csproj
+          grep -q 'appVersion = "1.7.1-android-phase2-ui4.5-account-v2-guest"' VoiceCraft.Server.Android/EndstoneBridgeController.cs
+          grep -q 'MaxAttemptsPerRelay = 5' VoiceCraft.Server.Android/EndstoneBridgeController.cs
+          grep -q 'PeerTimeoutSeconds = 30' VoiceCraft.Server.Android/EndstoneBridgeController.cs
+          grep -q 'BackupRelayActivity' VoiceCraft.Server.Android/ModernMainActivity.cs
+          grep -q 'case "unbind"' VoiceCraft.Server.Android/EndstoneBridgeController.cs
+          grep -q 'type = "unbind_result"' VoiceCraft.Server.Android/EndstoneBridgeController.cs
+          ! grep -q 'ADMIN OTP' VoiceCraft.Server.Android/RegisteredLoginActivity.cs
+          ! grep -q 'Role:' VoiceCraft.Server.Android/AccountStatusActivity.cs
 
       - name: Setup .NET 10
         uses: actions/setup-dotnet@v4
@@ -73,11 +100,12 @@ jobs:
       - name: Install .NET Android workload
         run: dotnet workload install android
 
-      - name: Restore and publish Android ARM64 APK
+      - name: Restore, build and publish Android ARM64 APK
         shell: bash
         run: |
           set -euo pipefail
           dotnet restore VoiceCraft.Server.Android/VoiceCraft.Server.Android.csproj
+          dotnet build VoiceCraft.Server.Android/VoiceCraft.Server.Android.csproj -c Release --no-restore
           dotnet publish VoiceCraft.Server.Android/VoiceCraft.Server.Android.csproj \
             -c Release \
             -r android-arm64 \
@@ -85,7 +113,7 @@ jobs:
           mkdir -p release-assets
           signed=$(find VoiceCraft.Server.Android/bin/Release/net10.0-android/android-arm64/publish -maxdepth 1 -name '*-Signed.apk' -print -quit)
           test -n "$signed"
-          cp "$signed" release-assets/VoiceCraft-Server-Mobile-UI4.4-arm64-Signed.apk
+          cp "$signed" release-assets/VoiceCraft-Server-Mobile-UI4.5-AccountV2-arm64-Signed.apk
 
       - name: Setup Python 3.11
         uses: actions/setup-python@v5
@@ -122,33 +150,44 @@ jobs:
           set -euo pipefail
           (cd release-assets && sha256sum * > SHA256SUMS.txt)
           cat > release-notes.md <<'EOF'
-          ## VoiceCraft Server Mobile UI4.4 bundle
+          ## VoiceCraft Server Mobile UI4.5 + Account V2
 
-          Production-tested bundle for Minecraft Bedrock VoiceCraft Server Mobile.
+          Release bundle for Minecraft Bedrock VoiceCraft Server Mobile.
 
           ### Versions
-          - Android: `1.7.1-android-phase2-ui4.4` (version code `10`)
+          - Android: `1.7.1-android-phase2-ui4.5-account-v2-guest` (version code `11`)
           - Endstone: `0.2.6`
           - Render Relay: `0.2.1`
           - Bridge protocol: `1`
           - VoiceCraft upstream: `v1.7.1` pinned to `85aaccccbb58adb23e8c87144e8b1c24bf4b2011`
 
-          ### Highlights
+          ### What's new in UI4.5
+          - Account V2 login gate with registered VoiceCraft Account and device-local Free Account modes.
+          - Free Account profile/session data is encrypted with AES-GCM, backed by Android Keystore, stored in `NoBackupFilesDir`, and excluded from Android backup/transfer.
+          - Guest ID survives normal restart and APK update, but Clear App Data or uninstall removes it permanently.
+          - Mobile login no longer exposes Admin OTP/MFA or admin-role indicators.
+          - New VoiceCraft artwork on account/login screens.
+          - Cleaner post-login UI with Language, Theme, Information and Account moved into Settings.
+          - Less crowded actions and clearer Home/Relay/Logs/Settings sections.
+
+          ### VoiceCraft / Relay features preserved
           - Optional Primary + multiple Backup Render relays with ordered 5-attempt failover and circular recovery.
           - Relay failover does not restart the VoiceCraft UDP runtime or disconnect existing voice clients.
-          - `/vc` can now intentionally disconnect/unbind the actual VoiceCraft client.
-          - Manual unbind is protected by `requestId + entityId`, is never replayed by Relay, and does not trigger Auto Rebind.
-          - Unexpected voice disconnects still trigger the normal 5-second Auto Rebind flow.
-          - In-game Bedrock chat alerts use `§` colors for relay outage, failover, backup success, Primary recovery, and no-backup emergency state.
-          - Relay alert anti-spam prevents reconnect attempts from flooding chat.
+          - `/vc` real disconnect/unbind using `requestId + entityId`.
+          - Destructive `unbind` is never replayed by Relay and manual unbind does not trigger Auto Rebind.
+          - Unexpected voice disconnects keep the normal 5-second Auto Rebind flow.
+          - Bedrock in-game relay status alerts use `§` colors without emoji.
 
           ### Deployment requirement
           All Primary/Backup Render deployments must use Relay `0.2.1` or newer from this release/source. Older Relay `0.2.0` does not forward `unbind` / `unbind_result`.
 
           ### Assets
-          - `VoiceCraft-Server-Mobile-UI4.4-arm64-Signed.apk`
+          - `VoiceCraft-Server-Mobile-UI4.5-AccountV2-arm64-Signed.apk`
           - `endstone_voicecraft-0.2.6-py3-none-any.whl`
           - `SHA256SUMS.txt`
+
+          ### Current networking limitation
+          Render WSS carries control/state/binding traffic only. Voice audio still uses UDP directly to Android.
           EOF
 
       - name: Create or update GitHub Release

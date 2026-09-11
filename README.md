@@ -2,13 +2,15 @@
 
 Android/mobile host for **VoiceCraft v1.7.1** with an Endstone + Render control-plane bridge for hosted Minecraft Bedrock servers.
 
-Current development bundle:
+## Current release
 
-- Android app: **`1.7.1-android-phase2-ui4.4`** (version code `10`)
+- Android app: **`1.7.1-android-phase2-ui4.5-account-v2-guest`** (version code `11`)
 - Endstone plugin: **`0.2.6`**
 - Render Relay: **`0.2.1`**
 - Render Relay protocol: **`1`**
 - VoiceCraft upstream: **v1.7.1**, pinned to commit `85aaccccbb58adb23e8c87144e8b1c24bf4b2011`
+
+Download the newest production bundle from the repository **Releases** page.
 
 > VoiceCraft v1.7.1 wire/audio protocol remains unchanged. Render carries control/state/binding traffic only; voice audio still uses VoiceCraft/LiteNetLib UDP directly to Android.
 
@@ -29,8 +31,9 @@ Primary Render Relay ──────┐
         └──────────────────┘
                 │
                 ▼
-VoiceCraft Server Mobile UI4.4
+VoiceCraft Server Mobile UI4.5
         │
+        ├─ Account V2 / local Free Account gate
         ├─ VoiceCraft v1.7.1 runtime
         ├─ LiteNetLib UDP voice server :9050
         ├─ McHttp TCP compatibility :9050
@@ -39,7 +42,41 @@ VoiceCraft Server Mobile UI4.4
         └─ relay/binding dashboard
 ```
 
-## UI4.4 / Endstone 0.2.6 highlights
+## UI4.5 / Account V2 highlights
+
+### Account V2 + Free Account
+
+The Android app now starts at the VoiceCraft account gate.
+
+Two user modes are supported:
+
+- **VoiceCraft Account** — sign in with an existing registered VoiceCraft account.
+- **Free Account** — creates a random `GUEST-...` identity stored only on that Android installation.
+
+Free Account behavior:
+
+- profile/session data is encrypted with AES-GCM;
+- encryption keys are held in Android Keystore;
+- data is stored under Android `NoBackupFilesDir`;
+- Android cloud backup/device-transfer restore is disabled for the app;
+- force-close, normal restart and APK update keep the same Guest ID;
+- **Clear App Data** or uninstall permanently removes the Guest ID;
+- reinstalling or creating a Free Account after data removal produces a new Guest ID;
+- Guest identities are not inserted into the main VoiceCraft account tables.
+
+The mobile app intentionally exposes only normal account login. Admin OTP/MFA controls and admin-role indicators are not shown in the Android UI.
+
+### Cleaner mobile UI
+
+UI4.5 reorganizes the app for smaller screens and tablets:
+
+- the main header is simplified;
+- Language, Theme, Information and Account controls are moved into **Settings**;
+- crowded three-button rows are replaced by clearer full-width actions where appropriate;
+- Home is focused on server status, address, relay state and player/bind state;
+- Relay setup is grouped into clear Render, Server/Secret and Plugin Config sections;
+- Account Center now follows the same light/dark visual language as the rest of the app;
+- Thai and English remain available.
 
 ### Multi-relay automatic failover
 
@@ -92,13 +129,9 @@ Pending     → Cancel Pending Bind
 Bound       → Disconnect / Unbind Microphone
 ```
 
-Status and operator tracked-player views remain available from the same menu.
-
 ### Real VoiceCraft Unbind
 
-`Disconnect / Unbind Microphone` is no longer only a local-state reset.
-
-Flow:
+`Disconnect / Unbind Microphone` disconnects the actual VoiceCraft client instead of only clearing local plugin state.
 
 ```text
 Player confirms Disconnect
@@ -140,20 +173,27 @@ Unexpected VoiceCraft client disconnects still use the normal **5-second Auto Re
 
 Endstone posts relay state changes to players using Bedrock `§` formatting, without emoji.
 
-Examples of state classes:
-
 ```text
-Red     relay/voice control plane temporarily unavailable
+Red     relay/control plane temporarily unavailable
 Red     Primary exhausted and no Backup Relay is configured
 Yellow  moving to Backup #N / wrapping to Primary
 Green   Backup #N paired successfully / Primary recovered
 ```
 
-Alerts are session-based, so the 5-second retry loop does not send the same outage warning every attempt.
+Alerts are session-based so the reconnect loop does not flood Minecraft chat.
 
 ## Required setup
 
-### 1. Deploy the Primary Render Relay
+### 1. Install the Android APK
+
+Install the signed ARM64 APK from the latest GitHub Release.
+
+On first launch:
+
+1. sign in with an existing VoiceCraft account, or
+2. choose **Create Free Account** for a device-local Guest identity.
+
+### 2. Deploy the Primary Render Relay
 
 Create a Render Web Service from this repository:
 
@@ -183,11 +223,9 @@ is converted by Android to:
 wss://voicecraft-main.onrender.com/bridge
 ```
 
-### 2. Deploy optional Backup Relays
+### 3. Deploy optional Backup Relays
 
-Deploy the same `VoiceCraft.Bridge.Relay` source on each backup service and use the **same `BRIDGE_SECRET`**.
-
-Example:
+Deploy the same `VoiceCraft.Bridge.Relay` source on each backup and use the **same `BRIDGE_SECRET`**.
 
 ```text
 Primary   https://voicecraft-main.onrender.com
@@ -195,9 +233,9 @@ Backup #1 https://voicecraft-backup1.onrender.com
 Backup #2 https://voicecraft-backup2.onrender.com
 ```
 
-### 3. Configure Android
+### 4. Configure Android Relay settings
 
-In the Android app configure:
+Open **Relay** and configure:
 
 ```text
 Primary Render Service URL
@@ -205,11 +243,9 @@ Server ID      (default: mcsv-main)
 Bridge Secret  (same value as every Render BRIDGE_SECRET)
 ```
 
-Use **Manage Backup Relays** to add optional backup URLs.
+Use **Manage Backup Relays** for optional backups. Primary-only configuration is valid.
 
-Primary-only configuration is valid. The Android VoiceCraft server will not start until the required Primary bridge settings pass validation.
-
-### 4. Install Endstone 0.2.6
+### 5. Install Endstone 0.2.6
 
 Use Endstone `0.11.x` on the Minecraft Bedrock host and install:
 
@@ -219,7 +255,7 @@ endstone_voicecraft-0.2.6-py3-none-any.whl
 
 Remove older `endstone_voicecraft-*.whl` files before installing the new wheel.
 
-Generate the Endstone config from Android after Primary and backups are configured.
+Generate the Endstone config from Android after Relay settings are configured.
 
 Example:
 
@@ -248,11 +284,11 @@ max_attempts = 5
 peer_timeout_seconds = 30
 ```
 
-### 5. Start VoiceCraft Server Mobile
+### 6. Start VoiceCraft Server Mobile
 
-Tap **Start Server** in Android.
+Use the center **Start** button in the Android bottom navigation.
 
-The current Android service starts the real VoiceCraft v1.7.1 runtime and keeps relay reconnect/failover isolated inside the bridge controller.
+Before startup, Android validates the Relay URL, generated WebSocket URL, Server ID, Bridge Secret and Voice/McHttp port.
 
 Default voice/McHttp port:
 
@@ -260,7 +296,7 @@ Default voice/McHttp port:
 9050
 ```
 
-### 6. Connect a VoiceCraft client
+### 7. Connect a VoiceCraft client
 
 For LAN testing:
 
@@ -270,7 +306,7 @@ For LAN testing:
 
 Set positioning mode to **Server**.
 
-When the client receives its one-use Binding Key, join Minecraft and use the automatic Bind form or run:
+After the client receives its one-use Binding Key, join Minecraft and run:
 
 ```text
 /vc
@@ -278,7 +314,7 @@ When the client receives its one-use Binding Key, join Minecraft and use the aut
 
 ## Relay protocol additions
 
-Protocol number remains **1**. UI4.4 adds compatible control message types rather than a new protocol version.
+Protocol number remains **1**.
 
 Endstone → Android:
 
@@ -301,38 +337,49 @@ server_status
 voice_client_disconnected
 ```
 
-The relay never transports VoiceCraft audio.
+The Render Relay never transports VoiceCraft audio.
 
 ## Security notes
 
 - Use `wss://` for deployed Render connections.
-- Do not hardcode the shared Bridge Secret in a public repository.
+- Never commit the shared Bridge Secret to a public repository.
 - Use the same Bridge Secret on Primary and backups for seamless failover.
-- If any relay is compromised, rotate the secret consistently on every relay, Android and Endstone.
-- Binding Keys and the Bridge Secret are intentionally hidden from normal runtime logs.
+- If a Relay is compromised, rotate the secret consistently on every Relay, Android and Endstone.
+- Binding Keys and Bridge Secrets are hidden from normal runtime logs.
+- Free Account files use encrypted local storage and are excluded from Android backup/restore.
+- Guest signing uses the separate `voicecraft-guest` backend and does not create normal account records.
 
 ## CI / verification
 
 The repository validates:
 
-- pinned VoiceCraft upstream commit;
-- Android UI4.4 version/source guards;
-- full Android ARM64 `dotnet publish`;
-- Endstone 0.11.10 API compatibility;
-- `/vc` metadata ownership and one-command registration;
+- pinned VoiceCraft v1.7.1 upstream commit;
+- Android UI4.5 / Account V2 source guards;
+- Guest local-storage hardening (`NoBackupFilesDir`, Android Keystore, AES-GCM);
+- exactly one Android launcher (`AccountGateActivity`);
+- no admin OTP/admin-role UI in the mobile login flow;
+- full Android ARM64 `dotnet build` and `dotnet publish`;
+- Endstone 0.11.x compatibility and wheel packaging;
 - ordered/circular multi-relay behavior and Primary-only behavior;
-- relay alert anti-spam transitions;
-- real protocol-1 `bind`, `unbind`, `unbind_result`, snapshot, disconnect and reconnect forwarding;
-- bad-secret rejection and Server-ID room isolation;
-- destructive unbind forwarding with **no replay after Android reconnect**;
-- wheel metadata/entrypoint and installed-wheel import;
-- exclusion of `__pycache__` / `.pyc` from the wheel.
+- Relay alert anti-spam transitions;
+- protocol-1 `bind`, `unbind`, `unbind_result`, snapshot and reconnect forwarding;
+- destructive unbind forwarding with **no replay after Android reconnect**.
 
-## Roadmap
+## Release assets
 
-Current Phase 2 makes Render resilient as the control plane. Voice audio is still direct UDP to Android.
+The production release workflow publishes:
 
-The next major phase is a public UDP relay/tunnel for remote users and CGNAT environments:
+```text
+VoiceCraft-Server-Mobile-UI4.5-AccountV2-arm64-Signed.apk
+endstone_voicecraft-0.2.6-py3-none-any.whl
+SHA256SUMS.txt
+```
+
+## Current limitation / roadmap
+
+Render WSS is the control plane only. Voice audio is still direct UDP to Android.
+
+The next major networking phase is a public UDP relay/tunnel for remote users and CGNAT environments:
 
 ```text
 VoiceCraft clients --UDP--> Public UDP relay/VPS
@@ -346,4 +393,4 @@ VoiceCraft clients --UDP--> Public UDP relay/VPS
                     VoiceCraft v1.7.1 runtime
 ```
 
-Render WSS remains the control plane; voice should not be tunneled through Render WebSockets.
+Render WSS should remain the control plane; VoiceCraft audio should not be tunneled through Render WebSockets.
