@@ -17,8 +17,6 @@ public sealed class AccountGateActivity : Activity
 {
     private static readonly Color Primary = Color.Rgb(73, 116, 255);
     private static readonly Color Primary2 = Color.Rgb(105, 86, 255);
-    private static readonly Color Sky = Color.Rgb(89, 200, 250);
-    private static readonly Color Green = Color.Rgb(34, 197, 94);
     private static readonly Color Amber = Color.Rgb(245, 158, 11);
 
     private Button? _guestButton;
@@ -95,9 +93,9 @@ public sealed class AccountGateActivity : Activity
         var root = new LinearLayout(this)
         {
             Orientation = Orientation.Vertical,
-            Gravity = GravityFlags.CenterHorizontal,
             Background = Solid(Page)
         };
+        root.SetGravity(GravityFlags.CenterHorizontal);
         root.SetPadding(Dp(16), Dp(18), Dp(16), Dp(30));
 
         var column = new LinearLayout(this)
@@ -116,9 +114,9 @@ public sealed class AccountGateActivity : Activity
         _statusCard = new LinearLayout(this)
         {
             Orientation = Orientation.Horizontal,
-            Gravity = GravityFlags.CenterVertical,
             Background = Round(Tint, 16, Border)
         };
+        _statusCard.SetGravity(GravityFlags.CenterVertical);
         _statusCard.SetPadding(Dp(14), Dp(12), Dp(14), Dp(12));
         _statusCard.Visibility = ViewStates.Gone;
 
@@ -129,11 +127,7 @@ public sealed class AccountGateActivity : Activity
         _statusCard.AddView(_status, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WrapContent, 1f));
         column.AddView(_statusCard, FullWrap(Dp(12)));
 
-        var footer = Text(
-            T("VoiceCraft Server Mobile • Account V2", "VoiceCraft Server Mobile • Account V2"),
-            10,
-            false,
-            Muted);
+        var footer = Text("VoiceCraft Server Mobile • Account V2", 10, false, Muted);
         footer.Gravity = GravityFlags.Center;
         footer.SetPadding(0, Dp(20), 0, Dp(4));
         column.AddView(footer);
@@ -154,9 +148,9 @@ public sealed class AccountGateActivity : Activity
 
         var top = new LinearLayout(this)
         {
-            Orientation = Orientation.Horizontal,
-            Gravity = GravityFlags.CenterVertical
+            Orientation = Orientation.Horizontal
         };
+        top.SetGravity(GravityFlags.CenterVertical);
 
         var mark = Text("VC", 14, true, Color.White);
         mark.Gravity = GravityFlags.Center;
@@ -194,9 +188,9 @@ public sealed class AccountGateActivity : Activity
 
         var featureRow = new LinearLayout(this)
         {
-            Orientation = Orientation.Horizontal,
-            Gravity = GravityFlags.CenterVertical
+            Orientation = Orientation.Horizontal
         };
+        featureRow.SetGravity(GravityFlags.CenterVertical);
         featureRow.SetPadding(0, Dp(18), 0, 0);
         featureRow.AddView(FeaturePill(T("ปลอดภัย", "SECURE"), Tint, Primary), new LinearLayout.LayoutParams(0, Dp(36), 1f));
         featureRow.AddView(FeaturePill(T("Guest ในเครื่อง", "LOCAL GUEST"), Tint2, Primary2), new LinearLayout.LayoutParams(0, Dp(36), 1f)
@@ -238,9 +232,9 @@ public sealed class AccountGateActivity : Activity
 
         var divider = new LinearLayout(this)
         {
-            Orientation = Orientation.Horizontal,
-            Gravity = GravityFlags.CenterVertical
+            Orientation = Orientation.Horizontal
         };
+        divider.SetGravity(GravityFlags.CenterVertical);
         divider.SetPadding(0, Dp(13), 0, Dp(5));
 
         var left = new View(this) { Background = Solid(Border) };
@@ -264,9 +258,9 @@ public sealed class AccountGateActivity : Activity
         var card = new LinearLayout(this)
         {
             Orientation = Orientation.Horizontal,
-            Gravity = GravityFlags.Top,
             Background = Round(WarningFill, 18, _dark ? Color.Rgb(103, 78, 35) : Color.Rgb(247, 213, 139))
         };
+        card.SetGravity(GravityFlags.Top);
         card.SetPadding(Dp(14), Dp(13), Dp(14), Dp(13));
 
         var icon = Text("i", 12, true, Amber);
@@ -381,8 +375,7 @@ public sealed class AccountGateActivity : Activity
         {
             Text = value,
             TextSize = 12,
-            MinHeight = Dp(54),
-            AllCaps = false
+            MinHeight = Dp(54)
         };
 
         button.SetTypeface(Typeface.Default, TypefaceStyle.Bold);

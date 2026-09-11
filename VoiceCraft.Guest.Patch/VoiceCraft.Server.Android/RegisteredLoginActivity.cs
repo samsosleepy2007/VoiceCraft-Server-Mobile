@@ -82,9 +82,9 @@ public sealed class RegisteredLoginActivity : Activity
         var root = new LinearLayout(this)
         {
             Orientation = Orientation.Vertical,
-            Gravity = GravityFlags.CenterHorizontal,
             Background = Solid(Page)
         };
+        root.SetGravity(GravityFlags.CenterHorizontal);
         root.SetPadding(Dp(16), Dp(16), Dp(16), Dp(30));
 
         var column = new LinearLayout(this)
@@ -104,9 +104,9 @@ public sealed class RegisteredLoginActivity : Activity
         _statusCard = new LinearLayout(this)
         {
             Orientation = Orientation.Horizontal,
-            Gravity = GravityFlags.CenterVertical,
             Background = Round(Tint, 16, Primary)
         };
+        _statusCard.SetGravity(GravityFlags.CenterVertical);
         _statusCard.SetPadding(Dp(14), Dp(12), Dp(14), Dp(12));
         _statusCard.Visibility = ViewStates.Gone;
 
@@ -129,9 +129,9 @@ public sealed class RegisteredLoginActivity : Activity
     {
         var row = new LinearLayout(this)
         {
-            Orientation = Orientation.Horizontal,
-            Gravity = GravityFlags.CenterVertical
+            Orientation = Orientation.Horizontal
         };
+        row.SetGravity(GravityFlags.CenterVertical);
 
         var back = SmallButton(T("‹ กลับ", "‹ BACK"));
         back.Click += (_, _) => Finish();
@@ -209,11 +209,11 @@ public sealed class RegisteredLoginActivity : Activity
 
         var otpRow = new LinearLayout(this)
         {
-            Orientation = Orientation.Horizontal,
-            Gravity = GravityFlags.CenterVertical
+            Orientation = Orientation.Horizontal
         };
+        otpRow.SetGravity(GravityFlags.CenterVertical);
         otpRow.SetPadding(0, Dp(14), 0, 0);
-        otpRow.AddView(FieldLabel(T("ADMIN OTP", "ADMIN OTP")), new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WrapContent, 1f));
+        otpRow.AddView(FieldLabel("ADMIN OTP"), new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WrapContent, 1f));
         var optional = Text(T("ไม่บังคับ", "OPTIONAL"), 9, true, Muted);
         optional.Gravity = GravityFlags.Center;
         optional.Background = Round(SurfaceSoft, 12, Border);
@@ -245,9 +245,9 @@ public sealed class RegisteredLoginActivity : Activity
         var card = new LinearLayout(this)
         {
             Orientation = Orientation.Horizontal,
-            Gravity = GravityFlags.Top,
             Background = Round(WarningFill, 18, _dark ? Color.Rgb(103, 78, 35) : Color.Rgb(247, 213, 139))
         };
+        card.SetGravity(GravityFlags.Top);
         card.SetPadding(Dp(14), Dp(13), Dp(14), Dp(13));
 
         var icon = Text("i", 12, true, Amber);
@@ -398,8 +398,7 @@ public sealed class RegisteredLoginActivity : Activity
         {
             Text = value,
             TextSize = 12,
-            MinHeight = Dp(52),
-            AllCaps = false
+            MinHeight = Dp(52)
         };
         button.SetTypeface(Typeface.Default, TypefaceStyle.Bold);
         button.SetTextColor(primary ? Color.White : Primary);
@@ -416,7 +415,6 @@ public sealed class RegisteredLoginActivity : Activity
         {
             Text = value,
             TextSize = 10,
-            AllCaps = false,
             Background = Round(Surface, 14, Border)
         };
         button.SetTypeface(Typeface.Default, TypefaceStyle.Bold);
