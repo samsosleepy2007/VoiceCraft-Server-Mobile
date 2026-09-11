@@ -132,9 +132,7 @@ public sealed class RegisteredLoginActivity : Activity
         var back = SmallButton(T("‹ กลับ", "‹ BACK"));
         back.Click += (_, _) => Finish();
         row.AddView(back, new LinearLayout.LayoutParams(Dp(92), Dp(40)));
-
         row.AddView(new Space(this), new LinearLayout.LayoutParams(0, 1, 1f));
-
         return row;
     }
 
@@ -236,18 +234,7 @@ public sealed class RegisteredLoginActivity : Activity
 
         try
         {
-            var result = await VoiceCraftAccountClient.LoginAsync(this, login, password, null);
-
-            if (result.AdminMfaSetupRequired || result.Session.Role.ToUpperInvariant() == "ADMIN")
-            {
-                RegisteredSessionStore.Delete(this);
-                SetStatus(
-                    T(
-                        "บัญชีนี้ไม่สามารถใช้กับ VoiceCraft Server Mobile ได้",
-                        "This account is not available in VoiceCraft Server Mobile."),
-                    false);
-                return;
-            }
+            await VoiceCraftAccountClient.LoginAsync(this, login, password);
 
             var intent = new Intent(this, typeof(ModernMainActivity));
             intent.SetFlags(ActivityFlags.NewTask | ActivityFlags.ClearTask);
@@ -256,29 +243,16 @@ public sealed class RegisteredLoginActivity : Activity
         }
         catch (Exception ex)
         {
-            SetStatus(SafeLoginError(ex), false);
+            SetStatus(
+                string.IsNullOrWhiteSpace(ex.Message)
+                    ? T("เข้าสู่ระบบไม่สำเร็จ", "Login failed.")
+                    : ex.Message,
+                false);
         }
         finally
         {
             SetBusy(false);
         }
-    }
-
-    private string SafeLoginError(Exception ex)
-    {
-        var message = ex.Message ?? string.Empty;
-        var lower = message.ToLowerInvariant();
-
-        if (lower.Contains("admin") || lower.Contains("otp") || lower.Contains("mfa"))
-        {
-            return T(
-                "บัญชีนี้ไม่สามารถใช้กับ VoiceCraft Server Mobile ได้",
-                "This account is not available in VoiceCraft Server Mobile.");
-        }
-
-        return string.IsNullOrWhiteSpace(message)
-            ? T("เข้าสู่ระบบไม่สำเร็จ", "Login failed.")
-            : message;
     }
 
     private void SetBusy(bool busy)

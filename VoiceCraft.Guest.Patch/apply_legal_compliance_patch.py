@@ -3,8 +3,8 @@ from pathlib import Path
 import re
 import sys
 
-DISPLAY_VERSION = "1.7.1-android-phase2-ui4.5.1-account-v2-guest"
-VERSION_CODE = 12
+DISPLAY_VERSION = "1.7.1-android-phase2-ui4.5.2-account-v2-guest"
+VERSION_CODE = 13
 
 
 def sub_required(text: str, pattern: str, replacement: str, label: str) -> str:
@@ -54,11 +54,11 @@ def patch_main_activity(path: Path) -> None:
             .SetTitle(T("โอเพนซอร์สและข้อกำหนด", "Open Source & Legal"))
             .SetMessage(message)
             .SetPositiveButton(T("SOURCE โปรเจกต์", "PROJECT SOURCE"), (_, _) =>
-                OpenLegalUrl("https://github.com/samsosleepy2007/VoiceCraft-Server-Mobile"))
+                OpenLegalUrl("https://github.com/samsosleepy2007/VoiceCraft-Server-Mobile-Unofficial"))
             .SetNeutralButton(T("VOICECRAFT ต้นฉบับ", "VOICECRAFT UPSTREAM"), (_, _) =>
                 OpenLegalUrl("https://github.com/AvionBlock/VoiceCraft"))
             .SetNegativeButton("GPL-3.0", (_, _) =>
-                OpenLegalUrl("https://github.com/samsosleepy2007/VoiceCraft-Server-Mobile/blob/main/LICENSE.md"))
+                OpenLegalUrl("https://github.com/samsosleepy2007/VoiceCraft-Server-Mobile-Unofficial/blob/main/LICENSE.md"))
             .Show();
     }
 

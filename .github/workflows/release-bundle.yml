@@ -27,8 +27,8 @@ jobs:
           set -euo pipefail
           echo "RELEASE_TAG=$(jq -r '.tag' release-manifest.json)" >> "$GITHUB_ENV"
           echo "RELEASE_TITLE=$(jq -r '.title' release-manifest.json)" >> "$GITHUB_ENV"
-          test "$(jq -r '.android.display_version' release-manifest.json)" = "1.7.1-android-phase2-ui4.5.1-account-v2-guest"
-          test "$(jq -r '.android.version_code' release-manifest.json)" = "12"
+          test "$(jq -r '.android.display_version' release-manifest.json)" = "1.7.1-android-phase2-ui4.5.2-account-v2-guest"
+          test "$(jq -r '.android.version_code' release-manifest.json)" = "13"
           test "$(jq -r '.endstone' release-manifest.json)" = "0.2.6"
           test "$(jq -r '.relay' release-manifest.json)" = "0.2.1"
           test "$(jq -r '.protocol' release-manifest.json)" = "1"
@@ -78,16 +78,26 @@ jobs:
           grep -q 'ShowOpenSourceLegal' VoiceCraft.Server.Android/ModernMainActivity.cs
           grep -q 'https://github.com/AvionBlock/VoiceCraft' VoiceCraft.Server.Android/ModernMainActivity.cs
           grep -q 'GPL-3.0' VoiceCraft.Server.Android/ModernMainActivity.cs
-          grep -q '<ApplicationVersion>12</ApplicationVersion>' VoiceCraft.Server.Android/VoiceCraft.Server.Android.csproj
-          grep -q '1.7.1-android-phase2-ui4.5.1-account-v2-guest' VoiceCraft.Server.Android/VoiceCraft.Server.Android.csproj
-          grep -q 'appVersion = "1.7.1-android-phase2-ui4.5.1-account-v2-guest"' VoiceCraft.Server.Android/EndstoneBridgeController.cs
+          grep -q '<ApplicationVersion>13</ApplicationVersion>' VoiceCraft.Server.Android/VoiceCraft.Server.Android.csproj
+          grep -q '1.7.1-android-phase2-ui4.5.2-account-v2-guest' VoiceCraft.Server.Android/VoiceCraft.Server.Android.csproj
+          grep -q 'appVersion = "1.7.1-android-phase2-ui4.5.2-account-v2-guest"' VoiceCraft.Server.Android/EndstoneBridgeController.cs
+          grep -q 'voicecraft-mobile' VoiceCraft.Server.Android/AccountApiConfig.cs
+          ! grep -q 'voicecraft-account' VoiceCraft.Server.Android/AccountApiConfig.cs
+          grep -q 'LoginAsync(this, login, password)' VoiceCraft.Server.Android/RegisteredLoginActivity.cs
+          ! grep -q 'LoginAsync(this, login, password, null)' VoiceCraft.Server.Android/RegisteredLoginActivity.cs
+          ! grep -Eiq 'admin|mfa|otp' VoiceCraft.Server.Android/VoiceCraftAccountClient.cs
+          ! grep -Eiq 'admin|mfa|otp' VoiceCraft.Server.Android/RegisteredLoginActivity.cs
+          ! grep -Eiq 'admin|mfa|otp' VoiceCraft.Server.Android/RegisteredSessionStore.cs
+          ! grep -Eiq 'admin|mfa|otp' VoiceCraft.Server.Android/AccountStatusActivity.cs
+          ! grep -Eiq 'admin|mfa|otp' VoiceCraft.Server.Android/AccountGateActivity.cs
+          ! grep -q 'Role' VoiceCraft.Server.Android/RegisteredSessionStore.cs
+          ! grep -q 'GetProperty("role")' VoiceCraft.Server.Android/VoiceCraftAccountClient.cs
+          ! grep -q 'adminMfaSetupRequired' VoiceCraft.Server.Android/VoiceCraftAccountClient.cs
           grep -q 'MaxAttemptsPerRelay = 5' VoiceCraft.Server.Android/EndstoneBridgeController.cs
           grep -q 'PeerTimeoutSeconds = 30' VoiceCraft.Server.Android/EndstoneBridgeController.cs
           grep -q 'BackupRelayActivity' VoiceCraft.Server.Android/ModernMainActivity.cs
           grep -q 'case "unbind"' VoiceCraft.Server.Android/EndstoneBridgeController.cs
           grep -q 'type = "unbind_result"' VoiceCraft.Server.Android/EndstoneBridgeController.cs
-          ! grep -q 'ADMIN OTP' VoiceCraft.Server.Android/RegisteredLoginActivity.cs
-          ! grep -q 'Role:' VoiceCraft.Server.Android/AccountStatusActivity.cs
 
       - name: Setup .NET 10
         uses: actions/setup-dotnet@v4
@@ -125,7 +135,21 @@ jobs:
           mkdir -p release-assets
           signed=$(find VoiceCraft.Server.Android/bin/Release/net10.0-android/android-arm64/publish -maxdepth 1 -name '*-Signed.apk' -print -quit)
           test -n "$signed"
-          cp "$signed" release-assets/VoiceCraft-Server-Mobile-UI4.5.1-AccountV2-arm64-Signed.apk
+          cp "$signed" release-assets/VoiceCraft-Server-Mobile-UI4.5.2-AccountV2-arm64-Signed.apk
+
+      - name: Scan APK for removed privileged-account client markers
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf apk-scan
+          mkdir apk-scan
+          unzip -q release-assets/VoiceCraft-Server-Mobile-UI4.5.2-AccountV2-arm64-Signed.apk -d apk-scan
+          if grep -R -a -E -i \
+            'AdminMfaSetupRequired|adminMfaSetupRequired|/v1/admin|x-admin-otp|MFA_REQUIRED|ADMIN_REQUIRED|voicecraft-account' \
+            apk-scan; then
+            echo 'Removed privileged-account marker found inside APK.' >&2
+            exit 1
+          fi
 
       - name: Setup Python 3.11
         uses: actions/setup-python@v5
@@ -181,14 +205,14 @@ jobs:
           VoiceCraft Server Mobile Corresponding Source
           Release tag: ${RELEASE_TAG}
           Release commit: ${GITHUB_SHA}
-          Android: 1.7.1-android-phase2-ui4.5.1-account-v2-guest (version code 12)
+          Android: 1.7.1-android-phase2-ui4.5.2-account-v2-guest (version code 13)
           VoiceCraft upstream: v1.7.1
           Upstream commit: 85aaccccbb58adb23e8c87144e8b1c24bf4b2011
           Upstream: https://github.com/AvionBlock/VoiceCraft
 
           This archive contains the modified project source, the exact checked-out
           VoiceCraft upstream source, patch scripts, Android source, Endstone source,
-          Relay source, account-related source and build/release scripts used for this release.
+          Relay source, mobile/guest account source and build/release scripts used for this release.
           See LICENSE.md and NOTICE.md.
           EOF
 
@@ -203,7 +227,7 @@ jobs:
           (
             cd release-assets
             sha256sum \
-              VoiceCraft-Server-Mobile-UI4.5.1-AccountV2-arm64-Signed.apk \
+              VoiceCraft-Server-Mobile-UI4.5.2-AccountV2-arm64-Signed.apk \
               endstone_voicecraft-0.2.6-py3-none-any.whl \
               GPL-3.0.txt \
               NOTICE.md \
@@ -211,36 +235,36 @@ jobs:
               > SHA256SUMS.txt
           )
           cat > release-notes.md <<'EOF'
-          ## VoiceCraft Server Mobile UI4.5.1 + Account V2
+          ## VoiceCraft Server Mobile UI4.5.2 + Account V2
 
-          Patch release for Minecraft Bedrock VoiceCraft Server Mobile with explicit open-source attribution, in-app legal/source access and release-level Corresponding Source packaging.
+          Security-isolation patch for the Android/mobile account client.
 
           ### Versions
-          - Android: `1.7.1-android-phase2-ui4.5.1-account-v2-guest` (version code `12`)
+          - Android: `1.7.1-android-phase2-ui4.5.2-account-v2-guest` (version code `13`)
           - Endstone: `0.2.6`
           - Render Relay: `0.2.1`
           - Bridge protocol: `1`
           - VoiceCraft upstream: `v1.7.1` pinned to `85aaccccbb58adb23e8c87144e8b1c24bf4b2011`
 
-          ### Open source / attribution update
-          - Adds an **Open Source & Legal** item inside Android Settings.
-          - Clearly identifies this project as an unofficial modified distribution based on VoiceCraft by AvionBlock.
-          - Links to this project's source, the original `AvionBlock/VoiceCraft` repository and GPL-3.0 from the app.
-          - Repository root contains the exact upstream GPL-3.0 text and a modification/attribution notice.
-          - Release includes the complete GPL text as `GPL-3.0.txt`.
-          - Release includes a version-matched `Corresponding-Source.zip` containing the modified source, exact pinned upstream source, patch scripts and build/release scripts.
+          ### Mobile account isolation
+          - Android now talks only to the dedicated `voicecraft-mobile` account endpoint.
+          - The APK contains no privileged-account role field, privileged OTP/MFA handling, privileged response flags, or privileged management API route.
+          - Registered mobile sessions store only token, account ID, login name and expiry.
+          - The dedicated mobile endpoint returns only registered-user session data and does not expose role information.
+          - Privileged account management remains server-side and is not part of the Android application.
+          - Release CI scans both source and the produced APK for removed privileged-account client markers.
 
-          ### Existing UI4.5 functionality preserved
-          - Account V2 and device-local Free Account modes.
+          ### Existing functionality preserved
+          - Registered Account + device-local Free Account.
           - AES-GCM + Android Keystore local storage and Android backup exclusion.
-          - Clean post-login UI with app tools in Settings.
+          - Open Source & Legal information in Settings.
           - Primary + Backup Render relay failover.
           - Real `/vc` unbind using `requestId + entityId`.
           - Unexpected disconnect Auto Rebind behavior.
           - Bedrock relay status alerts.
 
           ### Assets
-          - `VoiceCraft-Server-Mobile-UI4.5.1-AccountV2-arm64-Signed.apk`
+          - `VoiceCraft-Server-Mobile-UI4.5.2-AccountV2-arm64-Signed.apk`
           - `endstone_voicecraft-0.2.6-py3-none-any.whl`
           - `VoiceCraft-Server-Mobile-...-Corresponding-Source.zip`
           - `GPL-3.0.txt`

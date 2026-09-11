@@ -1,9 +1,9 @@
 {
-  "tag": "v1.7.1-android-phase2-ui4.5.1-account-v2-guest-endstone0.2.6-relay0.2.1",
-  "title": "VoiceCraft Server Mobile UI4.5.1 + Account V2 + Endstone 0.2.6 + Relay 0.2.1",
+  "tag": "v1.7.1-android-phase2-ui4.5.2-account-v2-guest-endstone0.2.6-relay0.2.1",
+  "title": "VoiceCraft Server Mobile UI4.5.2 + Account V2 + Endstone 0.2.6 + Relay 0.2.1",
   "android": {
-    "display_version": "1.7.1-android-phase2-ui4.5.1-account-v2-guest",
-    "version_code": 12
+    "display_version": "1.7.1-android-phase2-ui4.5.2-account-v2-guest",
+    "version_code": 13
   },
   "endstone": "0.2.6",
   "relay": "0.2.1",
