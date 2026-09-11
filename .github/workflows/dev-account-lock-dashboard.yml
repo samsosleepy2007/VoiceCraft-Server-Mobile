@@ -1,0 +1,44 @@
+name: Dev Account Lock Dashboard
+
+on:
+  push:
+    branches: [account-phase1]
+    paths:
+      - ".github/workflows/dev-account-lock-dashboard.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: account-phase1
+          fetch-depth: 0
+      - name: Make dashboard internal-only
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('VoiceCraft.Server.Android/ModernMainActivity.cs')
+          s = p.read_text(encoding='utf-8')
+          old = 'Name = "chat.voicecraft.server.ModernMainActivity",\n    Label = "VoiceCraft Server",\n    MainLauncher = false,\n    Exported = true)]'
+          new = 'Name = "chat.voicecraft.server.ModernMainActivity",\n    Label = "VoiceCraft Server",\n    MainLauncher = false,\n    Exported = false)]'
+          if old not in s:
+              if new in s:
+                  raise SystemExit(0)
+              raise SystemExit('ModernMainActivity activity marker not found')
+          p.write_text(s.replace(old, new, 1), encoding='utf-8')
+          PY
+          grep -A4 'chat.voicecraft.server.ModernMainActivity' VoiceCraft.Server.Android/ModernMainActivity.cs | grep -q 'Exported = false'
+      - name: Commit product source
+        shell: bash
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add VoiceCraft.Server.Android/ModernMainActivity.cs
+          git diff --cached --quiet && exit 0
+          git commit -m "fix(account): prevent external dashboard login bypass"
+          git push origin HEAD:account-phase1
