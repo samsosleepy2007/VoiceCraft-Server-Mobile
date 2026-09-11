@@ -18,7 +18,7 @@ internal static class VoiceCraftAccountClient
     };
 
     public static async Task<AccountLoginResult> LoginAsync(
-        Android.Content.Context context,
+        global::Android.Content.Context context,
         string loginName,
         string password,
         string? otp,
@@ -36,9 +36,9 @@ internal static class VoiceCraftAccountClient
                 installationId =
                     LocalInstallationStore.GetOrCreate(context),
                 deviceName =
-                    Android.OS.Build.Manufacturer + " " +
-                    Android.OS.Build.Model,
-                deviceModel = Android.OS.Build.Model,
+                    global::Android.OS.Build.Manufacturer + " " +
+                    global::Android.OS.Build.Model,
+                deviceModel = global::Android.OS.Build.Model,
                 platform = "android",
                 appVersion = AccountApiConfig.AppVersion
             },
