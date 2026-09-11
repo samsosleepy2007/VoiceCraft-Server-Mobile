@@ -1,6 +1,7 @@
 using Android.App;
 using Android.Content;
 using Android.Graphics;
+using Android.Graphics.Drawables;
 using Android.OS;
 using Android.Text;
 using Android.Views;
@@ -75,7 +76,7 @@ public sealed class AccountActivity : Activity
     {
         var root = Root();
         var card = Card();
-        card.AddView(Title("VoiceCraft Server"));
+        card.AddView(Heading("VoiceCraft Server"));
         card.AddView(Text("กำลังตรวจสอบบัญชี…\nChecking account session…", 14, Color.Rgb(163, 174, 199)));
         var progress = new ProgressBar(this) { Indeterminate = true };
         card.AddView(progress, new LinearLayout.LayoutParams(Dp(48), Dp(48)) { Gravity = GravityFlags.CenterHorizontal, TopMargin = Dp(20) });
@@ -87,7 +88,7 @@ public sealed class AccountActivity : Activity
     {
         var root = Root();
         var card = Card();
-        card.AddView(Title("VoiceCraft Account"));
+        card.AddView(Heading("VoiceCraft Account"));
         card.AddView(Text(
             _registerMode ? "สร้างบัญชีเพื่อใช้งาน VoiceCraft Server Mobile" : "เข้าสู่ระบบเพื่อเปิด VoiceCraft Server Mobile",
             13,
@@ -147,7 +148,7 @@ public sealed class AccountActivity : Activity
     {
         var root = Root();
         var card = Card();
-        card.AddView(Title("VoiceCraft Account"));
+        card.AddView(Heading("VoiceCraft Account"));
         card.AddView(Text("SIGNED IN", 12, Color.Rgb(74, 222, 128), true));
         card.AddView(Text(_session?.User?.Email ?? "Unknown account", 18, Color.White, true));
         card.AddView(Text("Your VoiceCraft server settings remain local in Phase 1. Cloud sync will be enabled in the next account phase.", 12, Color.Rgb(163, 174, 199)));
@@ -251,8 +252,8 @@ public sealed class AccountActivity : Activity
             await _auth.UpsertDeviceAsync(
                 session,
                 installationId,
-                Android.OS.Build.Manufacturer + " " + Android.OS.Build.Model,
-                Android.OS.Build.Model ?? "Android",
+                (Build.Manufacturer ?? "Android") + " " + (Build.Model ?? "Device"),
+                Build.Model ?? "Android",
                 PackageManager?.GetPackageInfo(PackageName!, 0)?.VersionName ?? "unknown");
         }
         catch
@@ -326,14 +327,14 @@ public sealed class AccountActivity : Activity
         return card;
     }
 
-    private TextView Title(string value) => Text(value, 27, Color.White, true);
+    private TextView Heading(string value) => Text(value, 27, Color.White, true);
 
     private TextView Text(string value, int sp, Color color, bool bold = false)
     {
         var view = new TextView(this) { Text = value };
         view.SetTextColor(color);
-        view.SetTextSize(Android.Util.ComplexUnitType.Sp, sp);
-        if (bold) view.SetTypeface(null, Android.Graphics.TypefaceStyle.Bold);
+        view.SetTextSize(global::Android.Util.ComplexUnitType.Sp, sp);
+        if (bold) view.SetTypeface(null, global::Android.Graphics.TypefaceStyle.Bold);
         view.SetPadding(0, Dp(5), 0, Dp(5));
         return view;
     }
@@ -383,9 +384,9 @@ public sealed class AccountActivity : Activity
 
     private int Dp(int value) => (int)(value * _density + 0.5f);
 
-    private static Android.Graphics.Drawables.GradientDrawable Rounded(Color color, int radiusDp)
+    private static GradientDrawable Rounded(Color color, int radiusDp)
     {
-        var shape = new Android.Graphics.Drawables.GradientDrawable();
+        var shape = new GradientDrawable();
         shape.SetColor(color);
         shape.SetCornerRadius(radiusDp * 3f);
         return shape;
