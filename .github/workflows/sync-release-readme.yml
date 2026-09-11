@@ -1,0 +1,52 @@
+name: Sync Release Version In README
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/sync-release-readme.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  sync-readme:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ github.token }}
+
+      - name: Update current Android release metadata in README
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("README.md")
+          text = path.read_text(encoding="utf-8")
+          old_version = "1.7.1-android-phase2-ui4.5-account-v2-guest"
+          new_version = "1.7.1-android-phase2-ui4.5.1-account-v2-guest"
+          if old_version not in text and new_version not in text:
+              raise SystemExit("README Android version marker not found")
+          text = text.replace(old_version, new_version)
+          text = text.replace("| Android version code | `11` |", "| Android version code | `12` |", 1)
+          path.write_text(text, encoding="utf-8")
+          PY
+
+      - name: Commit README if changed
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- README.md; then
+            echo "README already current."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add README.md
+          git commit -m "update README for UI4.5.1 legal patch"
+          git push origin HEAD:main
