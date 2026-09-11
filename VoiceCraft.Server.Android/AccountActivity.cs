@@ -132,13 +132,6 @@ public sealed class AccountActivity : Activity
         };
         card.AddView(switchMode, ButtonParams());
 
-        if (!_registerMode)
-        {
-            var reset = Button("FORGOT PASSWORD", false);
-            reset.Click += async (_, _) => await ResetPasswordAsync();
-            card.AddView(reset, ButtonParams());
-        }
-
         card.AddView(Text("Account data is protected by Supabase Auth and Row Level Security. Session tokens are encrypted with Android Keystore.", 11, Color.Rgb(115, 128, 158)));
         root.AddView(card, CardParams());
         SetContentView(root);
