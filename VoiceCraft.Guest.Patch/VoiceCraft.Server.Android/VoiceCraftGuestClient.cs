@@ -11,7 +11,7 @@ internal static class VoiceCraftGuestClient
     };
 
     public static async Task<bool> RefreshSessionAsync(
-        Android.Content.Context context,
+        global::Android.Content.Context context,
         GuestProfile profile,
         CancellationToken cancellationToken = default)
     {
