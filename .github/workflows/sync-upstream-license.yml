@@ -1,0 +1,43 @@
+name: Sync Upstream GPL License
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "VoiceCraft.Upstream"
+      - ".github/workflows/sync-upstream-license.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  sync-license:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository and upstream
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          token: ${{ github.token }}
+
+      - name: Copy exact upstream GPL-3.0 license to repository root
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f VoiceCraft.Upstream/LICENSE.md
+          cp VoiceCraft.Upstream/LICENSE.md LICENSE.md
+
+      - name: Commit license if changed
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- LICENSE.md && git ls-files --error-unmatch LICENSE.md >/dev/null 2>&1; then
+            echo "LICENSE.md already matches upstream."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add LICENSE.md
+          git commit -m "sync GPL-3.0 license from VoiceCraft upstream"
+          git push origin HEAD:main
