@@ -71,32 +71,49 @@ internal sealed class AccountSessionStore
 
     private static (byte[] Ciphertext, byte[] Iv) Encrypt(byte[] plaintext)
     {
-        using var keyStore = KeyStore.GetInstance("AndroidKeyStore");
-        keyStore.Load(null);
+        using var keyStore = GetKeyStore();
         EnsureKey(keyStore);
-        using var key = keyStore.GetKey(KeyAlias, null);
-        using var cipher = Cipher.GetInstance("AES/GCM/NoPadding");
+        using var key = keyStore.GetKey(KeyAlias, null)
+            ?? throw new InvalidOperationException("Android Keystore did not return the account session key.");
+        using var cipher = Cipher.GetInstance("AES/GCM/NoPadding")
+            ?? throw new InvalidOperationException("AES-GCM cipher is unavailable on this Android device.");
         cipher.Init(CipherMode.EncryptMode, key);
-        return (cipher.DoFinal(plaintext), cipher.GetIV() ?? Array.Empty<byte>());
+        var ciphertext = cipher.DoFinal(plaintext)
+            ?? throw new InvalidOperationException("Android Keystore encryption returned no data.");
+        var iv = cipher.GetIV();
+        if (iv is null || iv.Length == 0)
+            throw new InvalidOperationException("Android Keystore encryption returned no IV.");
+        return (ciphertext, iv);
     }
 
     private static byte[] Decrypt(byte[] ciphertext, byte[] iv)
     {
-        using var keyStore = KeyStore.GetInstance("AndroidKeyStore");
-        keyStore.Load(null);
+        using var keyStore = GetKeyStore();
         EnsureKey(keyStore);
-        using var key = keyStore.GetKey(KeyAlias, null);
-        using var cipher = Cipher.GetInstance("AES/GCM/NoPadding");
+        using var key = keyStore.GetKey(KeyAlias, null)
+            ?? throw new InvalidOperationException("Android Keystore did not return the account session key.");
+        using var cipher = Cipher.GetInstance("AES/GCM/NoPadding")
+            ?? throw new InvalidOperationException("AES-GCM cipher is unavailable on this Android device.");
         using var spec = new GCMParameterSpec(128, iv);
         cipher.Init(CipherMode.DecryptMode, key, spec);
-        return cipher.DoFinal(ciphertext);
+        return cipher.DoFinal(ciphertext)
+            ?? throw new InvalidOperationException("Android Keystore decryption returned no data.");
+    }
+
+    private static KeyStore GetKeyStore()
+    {
+        var keyStore = KeyStore.GetInstance("AndroidKeyStore")
+            ?? throw new InvalidOperationException("Android Keystore is unavailable on this device.");
+        keyStore.Load(null);
+        return keyStore;
     }
 
     private static void EnsureKey(KeyStore keyStore)
     {
         if (keyStore.ContainsAlias(KeyAlias)) return;
 
-        using var generator = KeyGenerator.GetInstance(KeyProperties.KeyAlgorithmAes, "AndroidKeyStore");
+        using var generator = KeyGenerator.GetInstance(KeyProperties.KeyAlgorithmAes, "AndroidKeyStore")
+            ?? throw new InvalidOperationException("Android Keystore AES key generator is unavailable.");
         using var spec = new KeyGenParameterSpec.Builder(
                 KeyAlias,
                 KeyStorePurpose.Encrypt | KeyStorePurpose.Decrypt)
