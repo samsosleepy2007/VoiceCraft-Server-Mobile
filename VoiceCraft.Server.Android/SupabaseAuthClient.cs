@@ -168,7 +168,7 @@ internal sealed class SupabaseAuthClient
         PropertyNameCaseInsensitive = true
     };
 
-    private sealed class AuthPayload
+    internal sealed class AuthPayload
     {
         [JsonPropertyName("access_token")]
         public string? AccessToken { get; set; }
