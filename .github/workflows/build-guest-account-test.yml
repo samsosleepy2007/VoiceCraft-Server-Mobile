@@ -1,0 +1,137 @@
+name: Build Guest Account Android Test
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - account-v2-guest-local
+    paths:
+      - "VoiceCraft.Server.Android/**"
+      - "VoiceCraft.Guest.Patch/**"
+      - "supabase/functions/voicecraft-guest/**"
+      - "supabase/migrations/20260912_guest_signing_key.sql"
+      - ".github/workflows/build-guest-account-test.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout repository and VoiceCraft v1.7.1 submodule
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Verify pinned upstream version
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git -C VoiceCraft.Upstream rev-parse HEAD)" = "85aaccccbb58adb23e8c87144e8b1c24bf4b2011"
+
+      - name: Apply Android headless runtime patch
+        run: python tools/apply_phase1.py VoiceCraft.Upstream
+
+      - name: Disable Spectre.Console for Android headless mode
+        run: python tools/apply_android_console_fix.py VoiceCraft.Upstream
+
+      - name: Replace HttpListener with Android TcpListener McHttp
+        run: python tools/apply_android_tcp_mchttp.py VoiceCraft.Upstream
+
+      - name: Add Endstone bridge runtime dispatcher
+        run: python tools/apply_bridge_runtime.py VoiceCraft.Upstream
+
+      - name: Apply Guest / Account V2 patch
+        run: python VoiceCraft.Guest.Patch/apply_guest_account_patch.py .
+
+      - name: Guest / Account V2 source guards
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f VoiceCraft.Server.Android/AccountGateActivity.cs
+          test -f VoiceCraft.Server.Android/GuestAccountStore.cs
+          test -f VoiceCraft.Server.Android/RegisteredSessionStore.cs
+          test -f VoiceCraft.Server.Android/Resources/xml/backup_rules.xml
+          test -f VoiceCraft.Server.Android/Resources/xml/data_extraction_rules.xml
+          grep -q 'MainLauncher = true' VoiceCraft.Server.Android/AccountGateActivity.cs
+          ! grep -R --include='*.cs' -n 'MainLauncher = true' VoiceCraft.Server.Android \
+            | grep -v 'AccountGateActivity.cs'
+          grep -q 'NoBackupFilesDir' VoiceCraft.Server.Android/KeystoreJsonStore.cs
+          grep -q 'AndroidKeyStore' VoiceCraft.Server.Android/KeystoreJsonStore.cs
+          grep -q 'AES/GCM/NoPadding' VoiceCraft.Server.Android/KeystoreJsonStore.cs
+          grep -q 'voicecraft-guest' VoiceCraft.Server.Android/AccountApiConfig.cs
+          grep -q 'OpenAccountCenter' VoiceCraft.Server.Android/ModernMainActivity.cs
+          grep -q 'android:allowBackup="false"' VoiceCraft.Server.Android/Properties/AndroidManifest.xml
+          grep -q '<ApplicationVersion>11</ApplicationVersion>' VoiceCraft.Server.Android/VoiceCraft.Server.Android.csproj
+          grep -q '1.7.1-android-phase2-ui4.5-account-v2-guest' VoiceCraft.Server.Android/VoiceCraft.Server.Android.csproj
+          grep -q 'appVersion = "1.7.1-android-phase2-ui4.5-account-v2-guest"' VoiceCraft.Server.Android/EndstoneBridgeController.cs
+
+      - name: Validate existing UI4.4 multi-relay and real-unbind guards
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -q 'MaxAttemptsPerRelay = 5' VoiceCraft.Server.Android/EndstoneBridgeController.cs
+          grep -q 'PeerTimeoutSeconds = 30' VoiceCraft.Server.Android/EndstoneBridgeController.cs
+          grep -q 'BackupRelayActivity' VoiceCraft.Server.Android/ModernMainActivity.cs
+          grep -q 'ExtraBridgeBackupUrls' VoiceCraft.Server.Android/ServerPreferences.cs
+          grep -q 'BridgeUnbindRequest' VoiceCraft.Server.Android/EndstoneBridgeController.cs
+          grep -q 'case "unbind"' VoiceCraft.Server.Android/EndstoneBridgeController.cs
+          grep -q 'type = "unbind_result"' VoiceCraft.Server.Android/EndstoneBridgeController.cs
+          grep -q 'VoiceCraft.DisconnectReason.Kicked' VoiceCraft.Server.Android/EndstoneBridgeController.cs
+          grep -q '_manualUnbindByEntity' VoiceCraft.Server.Android/EndstoneBridgeController.cs
+          grep -q 'bridgeVersion = "0.2.6"' VoiceCraft.Server.Android/EndstoneBridgeController.cs
+
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android API 36
+        shell: bash
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0"
+
+      - name: Install .NET Android workload
+        run: dotnet workload install android
+
+      - name: Restore Android project
+        run: dotnet restore VoiceCraft.Server.Android/VoiceCraft.Server.Android.csproj
+
+      - name: Build Android project
+        run: dotnet build VoiceCraft.Server.Android/VoiceCraft.Server.Android.csproj -c Release --no-restore
+
+      - name: Publish Android ARM64 APK
+        run: >-
+          dotnet publish VoiceCraft.Server.Android/VoiceCraft.Server.Android.csproj
+          -c Release
+          -r android-arm64
+          --no-restore
+
+      - name: APK inventory
+        shell: bash
+        run: |
+          set -euo pipefail
+          find VoiceCraft.Server.Android/bin/Release/net10.0-android/android-arm64/publish \
+            -maxdepth 1 -type f -name '*.apk' -print
+          test "$(find VoiceCraft.Server.Android/bin/Release/net10.0-android/android-arm64/publish \
+            -maxdepth 1 -type f -name '*.apk' | wc -l)" -gt 0
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: VoiceCraft-Guest-Account-Android-Test
+          if-no-files-found: error
+          path: VoiceCraft.Server.Android/bin/Release/net10.0-android/android-arm64/publish/*.apk
