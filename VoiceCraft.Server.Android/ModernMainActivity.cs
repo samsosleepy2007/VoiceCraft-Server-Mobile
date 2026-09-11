@@ -22,7 +22,7 @@ namespace VoiceCraft.Server.Android;
     Name = "chat.voicecraft.server.ModernMainActivity",
     Label = "VoiceCraft Server",
     MainLauncher = false,
-    Exported = true)]
+    Exported = false)]
 public sealed class ModernMainActivity : Activity
 {
     private static readonly Color Primary = Color.Rgb(73, 116, 255);
