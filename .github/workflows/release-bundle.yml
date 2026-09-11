@@ -13,7 +13,7 @@ permissions:
 jobs:
   build-and-release:
     runs-on: ubuntu-latest
-    timeout-minutes: 55
+    timeout-minutes: 60
 
     steps:
       - name: Checkout repository and VoiceCraft v1.7.1 submodule
@@ -27,18 +27,24 @@ jobs:
           set -euo pipefail
           echo "RELEASE_TAG=$(jq -r '.tag' release-manifest.json)" >> "$GITHUB_ENV"
           echo "RELEASE_TITLE=$(jq -r '.title' release-manifest.json)" >> "$GITHUB_ENV"
-          test "$(jq -r '.android.display_version' release-manifest.json)" = "1.7.1-android-phase2-ui4.5-account-v2-guest"
-          test "$(jq -r '.android.version_code' release-manifest.json)" = "11"
+          test "$(jq -r '.android.display_version' release-manifest.json)" = "1.7.1-android-phase2-ui4.5.1-account-v2-guest"
+          test "$(jq -r '.android.version_code' release-manifest.json)" = "12"
           test "$(jq -r '.endstone' release-manifest.json)" = "0.2.6"
           test "$(jq -r '.relay' release-manifest.json)" = "0.2.1"
           test "$(jq -r '.protocol' release-manifest.json)" = "1"
           test "$(jq -r '.voicecraft_upstream_commit' release-manifest.json)" = "85aaccccbb58adb23e8c87144e8b1c24bf4b2011"
 
-      - name: Verify pinned upstream version
+      - name: Verify pinned upstream version and GPL attribution
         shell: bash
         run: |
           set -euo pipefail
           test "$(git -C VoiceCraft.Upstream rev-parse HEAD)" = "85aaccccbb58adb23e8c87144e8b1c24bf4b2011"
+          test -f LICENSE.md
+          test -f NOTICE.md
+          cmp -s LICENSE.md VoiceCraft.Upstream/LICENSE.md
+          grep -q 'https://github.com/AvionBlock/VoiceCraft' NOTICE.md
+          grep -q 'modified' NOTICE.md
+          grep -q 'GPL-3.0' NOTICE.md
 
       - name: Apply Android headless runtime patch
         run: python tools/apply_phase1.py VoiceCraft.Upstream
@@ -55,6 +61,9 @@ jobs:
       - name: Apply Guest / Account V2 patch
         run: python VoiceCraft.Guest.Patch/apply_guest_account_patch.py .
 
+      - name: Apply Open Source / Legal patch
+        run: python VoiceCraft.Guest.Patch/apply_legal_compliance_patch.py .
+
       - name: Validate release source guards
         shell: bash
         run: |
@@ -66,9 +75,12 @@ jobs:
           grep -q 'AndroidKeyStore' VoiceCraft.Server.Android/KeystoreJsonStore.cs
           grep -q 'AES/GCM/NoPadding' VoiceCraft.Server.Android/KeystoreJsonStore.cs
           grep -q 'android:allowBackup="false"' VoiceCraft.Server.Android/Properties/AndroidManifest.xml
-          grep -q '<ApplicationVersion>11</ApplicationVersion>' VoiceCraft.Server.Android/VoiceCraft.Server.Android.csproj
-          grep -q '1.7.1-android-phase2-ui4.5-account-v2-guest' VoiceCraft.Server.Android/VoiceCraft.Server.Android.csproj
-          grep -q 'appVersion = "1.7.1-android-phase2-ui4.5-account-v2-guest"' VoiceCraft.Server.Android/EndstoneBridgeController.cs
+          grep -q 'ShowOpenSourceLegal' VoiceCraft.Server.Android/ModernMainActivity.cs
+          grep -q 'https://github.com/AvionBlock/VoiceCraft' VoiceCraft.Server.Android/ModernMainActivity.cs
+          grep -q 'GPL-3.0' VoiceCraft.Server.Android/ModernMainActivity.cs
+          grep -q '<ApplicationVersion>12</ApplicationVersion>' VoiceCraft.Server.Android/VoiceCraft.Server.Android.csproj
+          grep -q '1.7.1-android-phase2-ui4.5.1-account-v2-guest' VoiceCraft.Server.Android/VoiceCraft.Server.Android.csproj
+          grep -q 'appVersion = "1.7.1-android-phase2-ui4.5.1-account-v2-guest"' VoiceCraft.Server.Android/EndstoneBridgeController.cs
           grep -q 'MaxAttemptsPerRelay = 5' VoiceCraft.Server.Android/EndstoneBridgeController.cs
           grep -q 'PeerTimeoutSeconds = 30' VoiceCraft.Server.Android/EndstoneBridgeController.cs
           grep -q 'BackupRelayActivity' VoiceCraft.Server.Android/ModernMainActivity.cs
@@ -113,7 +125,7 @@ jobs:
           mkdir -p release-assets
           signed=$(find VoiceCraft.Server.Android/bin/Release/net10.0-android/android-arm64/publish -maxdepth 1 -name '*-Signed.apk' -print -quit)
           test -n "$signed"
-          cp "$signed" release-assets/VoiceCraft-Server-Mobile-UI4.5-AccountV2-arm64-Signed.apk
+          cp "$signed" release-assets/VoiceCraft-Server-Mobile-UI4.5.1-AccountV2-arm64-Signed.apk
 
       - name: Setup Python 3.11
         uses: actions/setup-python@v5
@@ -144,47 +156,100 @@ jobs:
           npm install --omit=dev
           npm run check
 
+      - name: Build GPL and Corresponding Source release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp VoiceCraft.Upstream/LICENSE.md release-assets/GPL-3.0.txt
+          cp NOTICE.md release-assets/NOTICE.md
+
+          source_name="VoiceCraft-Server-Mobile-${RELEASE_TAG}-Corresponding-Source"
+          mkdir -p "release-source/${source_name}"
+          rsync -a \
+            --exclude='.git' \
+            --exclude='release-assets' \
+            --exclude='release-source' \
+            ./ "release-source/${source_name}/"
+
+          find "release-source/${source_name}" -depth -type d \
+            \( -name bin -o -name obj -o -name node_modules -o -name dist -o -name __pycache__ \) \
+            -exec rm -rf {} +
+          find "release-source/${source_name}" -name '.git' -delete
+          find "release-source/${source_name}" -name '*.pyc' -delete
+
+          cat > "release-source/${source_name}/SOURCE_INFO.txt" <<EOF
+          VoiceCraft Server Mobile Corresponding Source
+          Release tag: ${RELEASE_TAG}
+          Release commit: ${GITHUB_SHA}
+          Android: 1.7.1-android-phase2-ui4.5.1-account-v2-guest (version code 12)
+          VoiceCraft upstream: v1.7.1
+          Upstream commit: 85aaccccbb58adb23e8c87144e8b1c24bf4b2011
+          Upstream: https://github.com/AvionBlock/VoiceCraft
+
+          This archive contains the modified project source, the exact checked-out
+          VoiceCraft upstream source, patch scripts, Android source, Endstone source,
+          Relay source, account-related source and build/release scripts used for this release.
+          See LICENSE.md and NOTICE.md.
+          EOF
+
+          (cd release-source && zip -qr "../release-assets/${source_name}.zip" "${source_name}")
+          test -s "release-assets/${source_name}.zip"
+          test -s release-assets/GPL-3.0.txt
+
       - name: Create checksums and release notes
         shell: bash
         run: |
           set -euo pipefail
-          (cd release-assets && sha256sum * > SHA256SUMS.txt)
+          (
+            cd release-assets
+            sha256sum \
+              VoiceCraft-Server-Mobile-UI4.5.1-AccountV2-arm64-Signed.apk \
+              endstone_voicecraft-0.2.6-py3-none-any.whl \
+              GPL-3.0.txt \
+              NOTICE.md \
+              *-Corresponding-Source.zip \
+              > SHA256SUMS.txt
+          )
           cat > release-notes.md <<'EOF'
-          ## VoiceCraft Server Mobile UI4.5 + Account V2
+          ## VoiceCraft Server Mobile UI4.5.1 + Account V2
 
-          Release bundle for Minecraft Bedrock VoiceCraft Server Mobile.
+          Patch release for Minecraft Bedrock VoiceCraft Server Mobile with explicit open-source attribution, in-app legal/source access and release-level Corresponding Source packaging.
 
           ### Versions
-          - Android: `1.7.1-android-phase2-ui4.5-account-v2-guest` (version code `11`)
+          - Android: `1.7.1-android-phase2-ui4.5.1-account-v2-guest` (version code `12`)
           - Endstone: `0.2.6`
           - Render Relay: `0.2.1`
           - Bridge protocol: `1`
           - VoiceCraft upstream: `v1.7.1` pinned to `85aaccccbb58adb23e8c87144e8b1c24bf4b2011`
 
-          ### What's new in UI4.5
-          - Account V2 login gate with registered VoiceCraft Account and device-local Free Account modes.
-          - Free Account profile/session data is encrypted with AES-GCM, backed by Android Keystore, stored in `NoBackupFilesDir`, and excluded from Android backup/transfer.
-          - Guest ID survives normal restart and APK update, but Clear App Data or uninstall removes it permanently.
-          - Mobile login no longer exposes Admin OTP/MFA or admin-role indicators.
-          - New VoiceCraft artwork on account/login screens.
-          - Cleaner post-login UI with Language, Theme, Information and Account moved into Settings.
-          - Less crowded actions and clearer Home/Relay/Logs/Settings sections.
+          ### Open source / attribution update
+          - Adds an **Open Source & Legal** item inside Android Settings.
+          - Clearly identifies this project as an unofficial modified distribution based on VoiceCraft by AvionBlock.
+          - Links to this project's source, the original `AvionBlock/VoiceCraft` repository and GPL-3.0 from the app.
+          - Repository root contains the exact upstream GPL-3.0 text and a modification/attribution notice.
+          - Release includes the complete GPL text as `GPL-3.0.txt`.
+          - Release includes a version-matched `Corresponding-Source.zip` containing the modified source, exact pinned upstream source, patch scripts and build/release scripts.
 
-          ### VoiceCraft / Relay features preserved
-          - Optional Primary + multiple Backup Render relays with ordered 5-attempt failover and circular recovery.
-          - Relay failover does not restart the VoiceCraft UDP runtime or disconnect existing voice clients.
-          - `/vc` real disconnect/unbind using `requestId + entityId`.
-          - Destructive `unbind` is never replayed by Relay and manual unbind does not trigger Auto Rebind.
-          - Unexpected voice disconnects keep the normal 5-second Auto Rebind flow.
-          - Bedrock in-game relay status alerts use `§` colors without emoji.
-
-          ### Deployment requirement
-          All Primary/Backup Render deployments must use Relay `0.2.1` or newer from this release/source. Older Relay `0.2.0` does not forward `unbind` / `unbind_result`.
+          ### Existing UI4.5 functionality preserved
+          - Account V2 and device-local Free Account modes.
+          - AES-GCM + Android Keystore local storage and Android backup exclusion.
+          - Clean post-login UI with app tools in Settings.
+          - Primary + Backup Render relay failover.
+          - Real `/vc` unbind using `requestId + entityId`.
+          - Unexpected disconnect Auto Rebind behavior.
+          - Bedrock relay status alerts.
 
           ### Assets
-          - `VoiceCraft-Server-Mobile-UI4.5-AccountV2-arm64-Signed.apk`
+          - `VoiceCraft-Server-Mobile-UI4.5.1-AccountV2-arm64-Signed.apk`
           - `endstone_voicecraft-0.2.6-py3-none-any.whl`
+          - `VoiceCraft-Server-Mobile-...-Corresponding-Source.zip`
+          - `GPL-3.0.txt`
+          - `NOTICE.md`
           - `SHA256SUMS.txt`
+
+          ### Original VoiceCraft project
+          - https://github.com/AvionBlock/VoiceCraft
+          - https://gitlab.avion.team/voicecraft/VoiceCraft
 
           ### Current networking limitation
           Render WSS carries control/state/binding traffic only. Voice audio still uses UDP directly to Android.
