@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from pathlib import Path
 import re
+import subprocess
 import sys
 
 DISPLAY_VERSION = "1.7.1-android-phase2-ui4.5.2-account-v2-guest"
@@ -125,6 +126,10 @@ def main() -> None:
 
     patch_main_activity(main_activity)
     patch_version(android)
+
+    ui5_patch = repo / "tools" / "apply_ui5_figma_redesign.py"
+    if ui5_patch.exists():
+        subprocess.run([sys.executable, str(ui5_patch), str(repo)], check=True)
 
     print("Legal/Open Source patch applied.")
     print(f"Android display version: {DISPLAY_VERSION}")
