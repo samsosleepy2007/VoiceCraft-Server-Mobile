@@ -78,15 +78,24 @@ internal static class ServerPreferences
     }
 
     internal static string GetBridgeServerId(Context context) =>
-        Get(context).GetString(ExtraBridgeServerId, "mcsv-main") ?? "mcsv-main";
+        Get(context).GetString(ExtraBridgeServerId, "") ?? string.Empty;
 
     internal static string GetBridgeSecret(Context context) =>
         Get(context).GetString(ExtraBridgeSecret, "") ?? string.Empty;
 
     internal static string GetLanguage(Context context)
     {
-        var value = Get(context).GetString(ExtraLanguage, "th") ?? "th";
-        return value.Equals("en", StringComparison.OrdinalIgnoreCase) ? "en" : "th";
+        var prefs = Get(context);
+        if (prefs.Contains(ExtraLanguage))
+        {
+            var saved = prefs.GetString(ExtraLanguage, "en") ?? "en";
+            return saved.Equals("th", StringComparison.OrdinalIgnoreCase) ? "th" : "en";
+        }
+
+        // First-run/default language follows the device. Thai devices use Thai;
+        // every other locale falls back to English.
+        var deviceLanguage = global::Java.Util.Locale.Default?.Language ?? string.Empty;
+        return deviceLanguage.Equals("th", StringComparison.OrdinalIgnoreCase) ? "th" : "en";
     }
 
     internal static bool GetDarkTheme(Context context) =>
@@ -128,7 +137,7 @@ internal static class ServerPreferences
     internal static void SaveUi(Context context, string language, bool darkTheme)
     {
         Get(context).Edit()!
-            .PutString(ExtraLanguage, language.Equals("en", StringComparison.OrdinalIgnoreCase) ? "en" : "th")!
+            .PutString(ExtraLanguage, language.Equals("th", StringComparison.OrdinalIgnoreCase) ? "th" : "en")!
             .PutBoolean(ExtraDarkTheme, darkTheme)!
             .Apply();
     }
