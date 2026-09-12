@@ -89,13 +89,19 @@ async function audit(actor: string | null, action: string, metadata: any, ip: st
   }
 }
 
+function backupRelaysAllowed(auth: any) {
+  return Boolean(auth?.is_admin) || Number(auth?.role_rank ?? 0) >= 10
+}
+
 async function userSessionFor(req: Request) {
   const token = bearer(req)
   if (!token) throw new HttpError(401, 'Authentication required.', 'AUTH_REQUIRED')
 
   const tokenHash = await sha256Hex(token)
-  const rows = await sql`
-    select s.id session_id,s.account_id,a.login_name,s.device_id,s.expires_at,a.token_version
+
+  const userRows = await sql`
+    select s.id session_id,s.account_id,a.login_name,s.device_id,s.expires_at,a.token_version,
+           r.rank role_rank,r.is_admin,'user'::text as mobile_session_source
     from voicecraft.sessions s
     join voicecraft.accounts a on a.id=s.account_id
     join voicecraft.roles r on r.code=a.role_code
@@ -112,10 +118,34 @@ async function userSessionFor(req: Request) {
     limit 1
   `
 
-  const auth = rows[0]
+  let auth = userRows[0]
+  if (auth) {
+    await sql`update voicecraft.sessions set last_seen_at=now() where id=${auth.session_id}`
+    return { ...auth, tokenHash }
+  }
+
+  const mobileRows = await sql`
+    select ms.id session_id,ms.account_id,a.login_name,ms.device_id,ms.expires_at,a.token_version,
+           r.rank role_rank,r.is_admin,'isolated'::text as mobile_session_source
+    from voicecraft.mobile_sessions ms
+    join voicecraft.accounts a on a.id=ms.account_id
+    join voicecraft.roles r on r.code=a.role_code
+    left join voicecraft.devices d on d.id=ms.device_id
+    where ms.token_hash=${tokenHash}
+      and ms.revoked_at is null
+      and ms.expires_at>now()
+      and ms.token_version=a.token_version
+      and r.is_admin=true
+      and a.status='active'
+      and (a.expires_at is null or a.expires_at>now())
+      and (d.id is null or d.revoked_at is null)
+    limit 1
+  `
+
+  auth = mobileRows[0]
   if (!auth) throw new HttpError(401, 'Session is invalid or expired.', 'SESSION_INVALID')
 
-  await sql`update voicecraft.sessions set last_seen_at=now() where id=${auth.session_id}`
+  await sql`update voicecraft.mobile_sessions set last_seen_at=now() where id=${auth.session_id}`
   return { ...auth, tokenHash }
 }
 
@@ -129,8 +159,8 @@ async function route(req: Request) {
     return json({
       ok: true,
       service: 'VoiceCraft Mobile Account API',
-      version: '1.0.0',
-      auth: 'registered-mobile-only',
+      version: '1.1.0',
+      auth: 'mobile-only',
     })
   }
 
@@ -141,12 +171,12 @@ async function route(req: Request) {
 
     const rows = await sql`
       select a.id,a.login_name,a.status,a.expires_at,a.token_version,
-             c.password_hash,c.failed_attempts,c.locked_until
+             c.password_hash,c.failed_attempts,c.locked_until,
+             r.rank role_rank,r.is_admin
       from voicecraft.accounts a
       join voicecraft.account_credentials c on c.account_id=a.id
       join voicecraft.roles r on r.code=a.role_code
       where lower(a.login_name)=lower(${loginName})
-        and r.is_admin=false
       limit 1
     `
 
@@ -207,19 +237,37 @@ async function route(req: Request) {
 
     const token = b64url(randomBytes(32))
     const tokenHash = await sha256Hex(token)
-    const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString()
+    const ttlMs = account.is_admin
+      ? 8 * 60 * 60 * 1000
+      : 30 * 24 * 60 * 60 * 1000
+    const expiresAt = new Date(Date.now() + ttlMs).toISOString()
 
-    await sql`
-      insert into voicecraft.sessions(
-        account_id,device_id,kind,token_hash,token_version,expires_at,ip,user_agent
-      )
-      values(
-        ${account.id},${deviceId},'user',${tokenHash},${account.token_version},
-        ${expiresAt},${clientIp(req)},${req.headers.get('user-agent')}
-      )
-    `
+    if (account.is_admin) {
+      await sql`
+        insert into voicecraft.mobile_sessions(
+          account_id,device_id,token_hash,token_version,expires_at,ip,user_agent
+        )
+        values(
+          ${account.id},${deviceId},${tokenHash},${account.token_version},
+          ${expiresAt},${clientIp(req)},${req.headers.get('user-agent')}
+        )
+      `
+    } else {
+      await sql`
+        insert into voicecraft.sessions(
+          account_id,device_id,kind,token_hash,token_version,expires_at,ip,user_agent
+        )
+        values(
+          ${account.id},${deviceId},'user',${tokenHash},${account.token_version},
+          ${expiresAt},${clientIp(req)},${req.headers.get('user-agent')}
+        )
+      `
+    }
 
-    await audit(account.id, 'mobile_login_success', { deviceId }, clientIp(req))
+    await audit(account.id, 'mobile_login_success', {
+      deviceId,
+      isolatedSession: Boolean(account.is_admin),
+    }, clientIp(req))
 
     return json({
       token,
@@ -228,16 +276,36 @@ async function route(req: Request) {
         id: account.id,
         loginName: account.login_name,
       },
+      capabilities: {
+        backupRelays: backupRelaysAllowed(account),
+      },
+    })
+  }
+
+  if (req.method === 'GET' && path === '/v1/entitlements') {
+    const auth = await userSessionFor(req)
+    return json({
+      capabilities: {
+        backupRelays: backupRelaysAllowed(auth),
+      },
     })
   }
 
   if (req.method === 'POST' && path === '/v1/logout') {
     const auth = await userSessionFor(req)
-    await sql`
-      update voicecraft.sessions
-      set revoked_at=coalesce(revoked_at,now())
-      where id=${auth.session_id}
-    `
+    if (auth.mobile_session_source === 'isolated') {
+      await sql`
+        update voicecraft.mobile_sessions
+        set revoked_at=coalesce(revoked_at,now())
+        where id=${auth.session_id}
+      `
+    } else {
+      await sql`
+        update voicecraft.sessions
+        set revoked_at=coalesce(revoked_at,now())
+        where id=${auth.session_id}
+      `
+    }
     await audit(auth.account_id, 'mobile_logout', {}, clientIp(req))
     return json({ success: true })
   }
