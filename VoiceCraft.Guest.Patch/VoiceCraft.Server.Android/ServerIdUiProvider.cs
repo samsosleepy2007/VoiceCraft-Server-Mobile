@@ -91,6 +91,7 @@ internal sealed class ServerIdUiLifecycleCallbacks : Java.Lang.Object, Applicati
 internal static class ServerIdUiHelper
 {
     private const string HelperMarker = "voicecraft-server-id-help";
+    private const string BlankDefaultMigration = "server_id_default_blank_v1";
     private static readonly ConditionalWeakTable<EditText, object> Attached = new();
 
     public static void TryApply(Activity activity)
@@ -100,6 +101,17 @@ internal static class ServerIdUiHelper
             var field = activity.GetType().GetField("_serverId", BindingFlags.Instance | BindingFlags.NonPublic);
             if (field?.GetValue(activity) is not EditText serverId)
                 return;
+
+            var prefs = ServerPreferences.Get(activity);
+            if (!prefs.GetBoolean(BlankDefaultMigration, false))
+            {
+                if (string.Equals(serverId.Text?.Trim(), "mcsv-main", StringComparison.OrdinalIgnoreCase))
+                {
+                    serverId.Text = string.Empty;
+                    prefs.Edit()!.PutString(ServerPreferences.ExtraBridgeServerId, string.Empty)!.Apply();
+                }
+                prefs.Edit()!.PutBoolean(BlankDefaultMigration, true)!.Apply();
+            }
 
             var thai = ServerPreferences.GetLanguage(activity) == "th";
             serverId.Hint = thai ? "ใส่อะไรก็ได้ เช่น ชื่อโปรเจกต์" : "Anything, e.g. your project name";
