@@ -43,6 +43,7 @@ public sealed class VoiceCraftCreditsApplication : Application, Application.IAct
         if (_listeners.ContainsKey(activity))
         {
             UpstreamCreditsInjector.TryInject(activity);
+            ConfiguredPluginDownloadInjector.TryInject(activity);
             return;
         }
 
@@ -51,10 +52,15 @@ public sealed class VoiceCraftCreditsApplication : Application, Application.IAct
         if (root == null || observer == null)
             return;
 
-        var listener = new CreditsLayoutListener(() => UpstreamCreditsInjector.TryInject(activity));
+        var listener = new CreditsLayoutListener(() =>
+        {
+            UpstreamCreditsInjector.TryInject(activity);
+            ConfiguredPluginDownloadInjector.TryInject(activity);
+        });
         observer.AddOnGlobalLayoutListener(listener);
         _listeners[activity] = listener;
         UpstreamCreditsInjector.TryInject(activity);
+        ConfiguredPluginDownloadInjector.TryInject(activity);
     }
 
     public void OnActivityPaused(Activity activity)
