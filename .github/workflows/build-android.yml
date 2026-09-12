@@ -3,10 +3,11 @@ name: Build Android APK
 on:
   workflow_dispatch:
   push:
-    branches: [main, endstone-phase2, modern-azure-ui]
+    branches: [main, endstone-phase2, modern-azure-ui, feature-item-mic-integration]
     paths:
       - "VoiceCraft.Upstream"
       - "VoiceCraft.Server.Android/**"
+      - "VoiceCraft.Endstone/**"
       - "VoiceCraft.Guest.Patch/**"
       - "supabase/functions/voicecraft-mobile/**"
       - "LICENSE.md"
@@ -15,6 +16,7 @@ on:
       - "tools/apply_android_console_fix.py"
       - "tools/apply_android_tcp_mchttp.py"
       - "tools/apply_bridge_runtime.py"
+      - "tools/apply_item_mic_bridge_patch.py"
       - ".github/workflows/build-android.yml"
       - ".gitmodules"
   pull_request:
@@ -22,6 +24,7 @@ on:
     paths:
       - "VoiceCraft.Upstream"
       - "VoiceCraft.Server.Android/**"
+      - "VoiceCraft.Endstone/**"
       - "VoiceCraft.Guest.Patch/**"
       - "supabase/functions/voicecraft-mobile/**"
       - "LICENSE.md"
@@ -30,6 +33,7 @@ on:
       - "tools/apply_android_console_fix.py"
       - "tools/apply_android_tcp_mchttp.py"
       - "tools/apply_bridge_runtime.py"
+      - "tools/apply_item_mic_bridge_patch.py"
       - ".github/workflows/build-android.yml"
       - ".gitmodules"
 
@@ -68,6 +72,9 @@ jobs:
       - name: Apply Guest / Account V2 patch
         run: python VoiceCraft.Guest.Patch/apply_guest_account_patch.py .
 
+      - name: Apply Item Mic bridge patch
+        run: python tools/apply_item_mic_bridge_patch.py .
+
       - name: Apply Open Source / Legal patch
         run: python VoiceCraft.Guest.Patch/apply_legal_compliance_patch.py .
 
@@ -105,11 +112,12 @@ jobs:
           grep -q 'https://github.com/AvionBlock/VoiceCraft' VoiceCraft.Server.Android/ModernMainActivity.cs
           grep -q 'GPL-3.0' VoiceCraft.Server.Android/ModernMainActivity.cs
           grep -q 'android:allowBackup="false"' VoiceCraft.Server.Android/Properties/AndroidManifest.xml
+          grep -q 'android:icon="@drawable/voicecraft_logo"' VoiceCraft.Server.Android/Properties/AndroidManifest.xml
           grep -q '<ApplicationVersion>13</ApplicationVersion>' VoiceCraft.Server.Android/VoiceCraft.Server.Android.csproj
           grep -q '1.7.1-android-phase2-ui4.5.2-account-v2-guest' VoiceCraft.Server.Android/VoiceCraft.Server.Android.csproj
           grep -q 'appVersion = "1.7.1-android-phase2-ui4.5.2-account-v2-guest"' VoiceCraft.Server.Android/EndstoneBridgeController.cs
 
-      - name: Validate multi-relay and real-unbind guards
+      - name: Validate multi-relay, unbind and Item Mic guards
         shell: bash
         run: |
           set -euo pipefail
@@ -123,6 +131,15 @@ jobs:
           grep -q 'VoiceCraft.DisconnectReason.Kicked' VoiceCraft.Server.Android/EndstoneBridgeController.cs
           grep -q '_manualUnbindByEntity' VoiceCraft.Server.Android/EndstoneBridgeController.cs
           grep -q 'bridgeVersion = "0.2.6"' VoiceCraft.Server.Android/EndstoneBridgeController.cs
+          grep -q 'bool? MicOn' VoiceCraft.Server.Android/EndstoneBridgeController.cs
+          grep -q 'state.MicOn.HasValue' VoiceCraft.Server.Android/EndstoneBridgeController.cs
+          grep -q 'entity.ServerMuted = serverMuted' VoiceCraft.Server.Android/EndstoneBridgeController.cs
+          grep -q 'root.TryGetProperty("micOn"' VoiceCraft.Server.Android/EndstoneBridgeController.cs
+          test -f VoiceCraft.Endstone/src/endstone_voicecraft/item_mic.py
+          grep -q 'version = "0.2.7"' VoiceCraft.Endstone/src/endstone_voicecraft/item_mic.py
+          grep -q 'message\["micOn"\] = mic_on' VoiceCraft.Endstone/src/endstone_voicecraft/item_mic.py
+          grep -q 'from .item_mic import VoiceCraftEndstone' VoiceCraft.Endstone/src/endstone_voicecraft/__init__.py
+          grep -q 'version = "0.2.7"' VoiceCraft.Endstone/pyproject.toml
 
       - name: Setup .NET 10
         uses: actions/setup-dotnet@v4
