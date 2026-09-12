@@ -12,6 +12,8 @@
 
   <application
     android:label="VoiceCraft Server"
+    android:icon="@drawable/voicecraft_logo"
+    android:roundIcon="@drawable/voicecraft_logo"
     android:allowBackup="false"
     android:supportsRtl="true"
     android:usesCleartextTraffic="true">

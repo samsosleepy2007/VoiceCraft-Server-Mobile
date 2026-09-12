@@ -1,3 +1,3 @@
-from .menu import VoiceCraftEndstone
+from .item_mic import VoiceCraftEndstone
 
 __all__ = ["VoiceCraftEndstone"]
