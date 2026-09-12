@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 from pathlib import Path
+import re
 import sys
 
 
@@ -48,13 +49,14 @@ def main() -> None:
             1,
         )
 
-    text = text.replace(
-        "text.Split(Environment.NewLine, StringSplitOptions.None);",
-        "text.Split(global::System.Environment.NewLine, StringSplitOptions.None);",
-    )
-    text = text.replace(
-        "text = string.Join(Environment.NewLine, rows);",
-        "text = string.Join(global::System.Environment.NewLine, rows);",
+    # ModernMainActivity imports Android.OS, which also exposes Environment.
+    # Fully qualify every generated System.Environment.NewLine reference while
+    # leaving already-qualified references untouched. This also repairs later
+    # UI5 refinement passes that use RemoveEmptyEntries/search filtering.
+    text = re.sub(
+        r"(?<!System\.)Environment\.NewLine",
+        "global::System.Environment.NewLine",
+        text,
     )
 
     if "private View SettingsAction(" not in text:
