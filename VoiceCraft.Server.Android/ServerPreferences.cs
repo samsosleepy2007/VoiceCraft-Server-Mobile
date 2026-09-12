@@ -78,7 +78,7 @@ internal static class ServerPreferences
     }
 
     internal static string GetBridgeServerId(Context context) =>
-        Get(context).GetString(ExtraBridgeServerId, "mcsv-main") ?? "mcsv-main";
+        Get(context).GetString(ExtraBridgeServerId, "") ?? string.Empty;
 
     internal static string GetBridgeSecret(Context context) =>
         Get(context).GetString(ExtraBridgeSecret, "") ?? string.Empty;
