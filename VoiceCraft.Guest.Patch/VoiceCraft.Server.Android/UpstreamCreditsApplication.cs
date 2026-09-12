@@ -399,7 +399,7 @@ internal static class UpstreamCreditsInjector
             Text = value
         };
         text.SetTextColor(color);
-        text.SetTextSize(Android.Util.ComplexUnitType.Sp, size);
+        text.SetTextSize(global::Android.Util.ComplexUnitType.Sp, size);
         if (bold)
             text.SetTypeface(Typeface.Default, TypefaceStyle.Bold);
         return text;
