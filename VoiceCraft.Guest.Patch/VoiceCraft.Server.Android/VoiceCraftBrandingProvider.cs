@@ -90,9 +90,13 @@ internal static class VoiceCraftBranding
         ("เซิร์ฟเวอร์เสียง VoiceCraft บน Android", "VoiceCraft Server"),
         ("VoiceCraft voice server on Android", "VoiceCraft Server"),
         ("Android VoiceCraft control center", "VoiceCraft Server control center"),
+        ("Android • VoiceCraft 1.7.1", "VoiceCraft Server • 1.7.1"),
         ("Android Server", "VoiceCraft Server"),
         ("เสียงยังใช้ UDP ไป Android โดยตรง", "เสียงยังใช้ UDP ไป VoiceCraft Server โดยตรง"),
         ("Voice audio still uses UDP directly to Android", "Voice audio still uses UDP directly to VoiceCraft Server"),
+        ("ตอนทดสอบให้ Client อยู่ LAN เดียวกับ Android", "ตอนทดสอบให้ Client อยู่ LAN เดียวกับ VoiceCraft Server"),
+        ("keep the client on the same LAN as Android", "keep the client on the same LAN as VoiceCraft Server"),
+        ("Audio still uses UDP directly to Android;", "Audio still uses UDP directly to VoiceCraft Server;"),
         ("2) ตั้งค่า Android", "2) ตั้งค่า VoiceCraft Server"),
         ("2) Configure Android", "2) Configure VoiceCraft Server"),
         ("Android Bridge", "VoiceCraft Server Bridge")
