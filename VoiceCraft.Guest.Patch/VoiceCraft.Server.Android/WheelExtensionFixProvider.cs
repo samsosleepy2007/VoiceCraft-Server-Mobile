@@ -8,8 +8,8 @@ using AndroidUri = Android.Net.Uri;
 namespace VoiceCraft.Server.Android;
 
 // Android/File Manager variants may append .zip because Python wheels are ZIP containers
-// and the downloader writes them through MediaStore with a ZIP MIME type. Keep that
-// behavior simple, then immediately normalize *.whl.zip back to the real wheel name.
+// and may also add " (1)", " (2)", ... when a previous copy already exists. Normalize
+// those storage-only suffixes back to the canonical Python wheel filename.
 [ContentProvider(new[] { "chat.voicecraft.server.wheelextensionfix" }, Exported = false, InitOrder = 1100)]
 public sealed class WheelExtensionFixProvider : ContentProvider
 {
@@ -103,7 +103,7 @@ internal static class WheelExtensionFix
             MediaStore.Downloads.ExternalContentUri,
             projection,
             MediaStore.IMediaColumns.DisplayName + " LIKE ?",
-            new[] { "endstone_voicecraft-%.whl.zip" },
+            new[] { "endstone_voicecraft-%" },
             null);
 
         if (cursor == null)
@@ -121,12 +121,16 @@ internal static class WheelExtensionFix
             var relativePath = pathIndex >= 0 ? cursor.GetString(pathIndex) ?? string.Empty : string.Empty;
 
             if (!name.StartsWith("endstone_voicecraft-", StringComparison.OrdinalIgnoreCase) ||
-                !name.EndsWith(".whl.zip", StringComparison.OrdinalIgnoreCase) ||
                 !relativePath.Contains("VoiceCraft", StringComparison.OrdinalIgnoreCase))
                 continue;
 
-            var fixedName = name[..^4]; // remove only the final .zip
+            var fixedName = CanonicalWheelName(name);
+            if (string.Equals(name, fixedName, StringComparison.Ordinal))
+                continue;
+
             var id = cursor.GetLong(idIndex);
+            DeleteConflictingCanonical(resolver, fixedName, relativePath, id);
+
             var itemUri = ContentUris.WithAppendedId(MediaStore.Downloads.ExternalContentUri, id);
             var values = new ContentValues();
             values.Put(MediaStore.IMediaColumns.DisplayName, fixedName);
@@ -137,5 +141,66 @@ internal static class WheelExtensionFix
                 AndroidRuntimeLog.Append("UI", $"Normalized Endstone wheel filename: {name} -> {fixedName}");
         }
 #pragma warning restore CA1416
+    }
+
+    private static string CanonicalWheelName(string name)
+    {
+        var fixedName = name;
+
+        if (fixedName.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
+            fixedName = fixedName[..^4];
+
+        if (!fixedName.EndsWith(".whl", StringComparison.OrdinalIgnoreCase))
+            return fixedName;
+
+        var whlStart = fixedName.Length - 4;
+        var close = whlStart - 1;
+        if (close < 0 || fixedName[close] != ')')
+            return fixedName;
+
+        var open = fixedName.LastIndexOf(" (", close, StringComparison.Ordinal);
+        if (open < 0 || open + 2 >= close)
+            return fixedName;
+
+        for (var i = open + 2; i < close; i++)
+        {
+            if (!char.IsDigit(fixedName[i]))
+                return fixedName;
+        }
+
+        return fixedName[..open] + fixedName[whlStart..];
+    }
+
+    private static void DeleteConflictingCanonical(ContentResolver resolver, string fixedName, string relativePath, long currentId)
+    {
+        var projection = new[] { "_id", MediaStore.IMediaColumns.RelativePath };
+        using var cursor = resolver.Query(
+            MediaStore.Downloads.ExternalContentUri,
+            projection,
+            MediaStore.IMediaColumns.DisplayName + " = ?",
+            new[] { fixedName },
+            null);
+
+        if (cursor == null)
+            return;
+
+        var idIndex = cursor.GetColumnIndex("_id");
+        var pathIndex = cursor.GetColumnIndex(MediaStore.IMediaColumns.RelativePath);
+        if (idIndex < 0)
+            return;
+
+        while (cursor.MoveToNext())
+        {
+            var id = cursor.GetLong(idIndex);
+            if (id == currentId)
+                continue;
+
+            var candidatePath = pathIndex >= 0 ? cursor.GetString(pathIndex) ?? string.Empty : string.Empty;
+            if (!candidatePath.Equals(relativePath, StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            var uri = ContentUris.WithAppendedId(MediaStore.Downloads.ExternalContentUri, id);
+            resolver.Delete(uri, null, null);
+        }
     }
 }
