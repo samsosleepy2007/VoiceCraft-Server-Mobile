@@ -180,6 +180,31 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: VoiceCraft-Server-Android-arm64-UI4.5.2-AccountV2
+          name: VoiceCraft-Server-Android-arm64-UI4.5.2-AccountV2-ItemMic
           if-no-files-found: error
           path: VoiceCraft.Server.Android/bin/Release/net10.0-android/android-arm64/publish/*.apk
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Build Endstone 0.2.7 Item Mic wheel
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install build
+          python -m compileall -q VoiceCraft.Endstone/src VoiceCraft.Endstone/tests
+          (cd VoiceCraft.Endstone && python -m build --wheel)
+          wheel=$(find VoiceCraft.Endstone/dist -maxdepth 1 -name 'endstone_voicecraft-0.2.7-*.whl' -print -quit)
+          test -n "$wheel"
+          mkdir -p test-assets
+          cp "$wheel" test-assets/endstone_voicecraft-0.2.7-py3-none-any.whl
+
+      - name: Upload Endstone Item Mic wheel
+        uses: actions/upload-artifact@v4
+        with:
+          name: VoiceCraft-Endstone-0.2.7-ItemMic
+          if-no-files-found: error
+          path: test-assets/endstone_voicecraft-0.2.7-py3-none-any.whl
