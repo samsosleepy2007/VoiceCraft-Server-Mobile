@@ -133,8 +133,13 @@ jobs:
           grep -q 'bridgeVersion = "0.2.6"' VoiceCraft.Server.Android/EndstoneBridgeController.cs
           grep -q 'bool? MicOn' VoiceCraft.Server.Android/EndstoneBridgeController.cs
           grep -q 'state.MicOn.HasValue' VoiceCraft.Server.Android/EndstoneBridgeController.cs
-          grep -q 'entity.ServerMuted = serverMuted' VoiceCraft.Server.Android/EndstoneBridgeController.cs
+          grep -q 'ItemMicMutedProperty = "voicecraft:item_mic_muted"' VoiceCraft.Server.Android/EndstoneBridgeController.cs
+          grep -q 'entity.SetProperty(ItemMicMutedProperty, itemMicMuted)' VoiceCraft.Server.Android/EndstoneBridgeController.cs
+          grep -q 'entity.SetProperty(ItemMicMutedProperty, false)' VoiceCraft.Server.Android/EndstoneBridgeController.cs
+          ! grep -q 'entity.ServerMuted = serverMuted' VoiceCraft.Server.Android/EndstoneBridgeController.cs
           grep -q 'root.TryGetProperty("micOn"' VoiceCraft.Server.Android/EndstoneBridgeController.cs
+          grep -q 'TryGetProperty<bool>("voicecraft:item_mic_muted"' VoiceCraft.Upstream/VoiceCraft.Network/Servers/VoiceCraftServer.cs
+          grep -q 'networkEntity.Muted || networkEntity.ServerMuted || itemMicMuted' VoiceCraft.Upstream/VoiceCraft.Network/Servers/VoiceCraftServer.cs
           test -f VoiceCraft.Endstone/src/endstone_voicecraft/item_mic.py
           grep -q 'version = "0.2.7"' VoiceCraft.Endstone/src/endstone_voicecraft/item_mic.py
           grep -q 'message\["micOn"\] = mic_on' VoiceCraft.Endstone/src/endstone_voicecraft/item_mic.py
