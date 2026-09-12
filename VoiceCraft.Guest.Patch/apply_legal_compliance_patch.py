@@ -131,6 +131,10 @@ def main() -> None:
     if ui5_patch.exists():
         subprocess.run([sys.executable, str(ui5_patch), str(repo)], check=True)
 
+    ui5_compile_fix = repo / "tools" / "fix_ui5_generated_newlines.py"
+    if ui5_compile_fix.exists():
+        subprocess.run([sys.executable, str(ui5_compile_fix), str(repo)], check=True)
+
     print("Legal/Open Source patch applied.")
     print(f"Android display version: {DISPLAY_VERSION}")
     print(f"Android version code: {VERSION_CODE}")
