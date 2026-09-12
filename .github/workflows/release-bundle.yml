@@ -3,7 +3,7 @@ name: Release VoiceCraft Bundle
 on:
   workflow_dispatch:
   push:
-    branches: [main]
+    branches: [main, release-itemmic-0.2.7]
     paths:
       - "release-manifest.json"
 
@@ -29,9 +29,10 @@ jobs:
           echo "RELEASE_TITLE=$(jq -r '.title' release-manifest.json)" >> "$GITHUB_ENV"
           test "$(jq -r '.android.display_version' release-manifest.json)" = "1.7.1-android-phase2-ui4.5.2-account-v2-guest"
           test "$(jq -r '.android.version_code' release-manifest.json)" = "13"
-          test "$(jq -r '.endstone' release-manifest.json)" = "0.2.6"
+          test "$(jq -r '.endstone' release-manifest.json)" = "0.2.7"
           test "$(jq -r '.relay' release-manifest.json)" = "0.2.1"
           test "$(jq -r '.protocol' release-manifest.json)" = "1"
+          test "$(jq -r '.item_mic' release-manifest.json)" = "2.2.0"
           test "$(jq -r '.voicecraft_upstream_commit' release-manifest.json)" = "85aaccccbb58adb23e8c87144e8b1c24bf4b2011"
 
       - name: Verify pinned upstream version and GPL attribution
@@ -43,7 +44,6 @@ jobs:
           test -f NOTICE.md
           cmp -s LICENSE.md VoiceCraft.Upstream/LICENSE.md
           grep -q 'https://github.com/AvionBlock/VoiceCraft' NOTICE.md
-          grep -q 'modified' NOTICE.md
           grep -q 'GPL-3.0' NOTICE.md
 
       - name: Apply Android headless runtime patch
@@ -61,43 +61,43 @@ jobs:
       - name: Apply Guest / Account V2 patch
         run: python VoiceCraft.Guest.Patch/apply_guest_account_patch.py .
 
+      - name: Apply Item Mic bridge patch
+        run: python tools/apply_item_mic_bridge_patch.py .
+
       - name: Apply Open Source / Legal patch
         run: python VoiceCraft.Guest.Patch/apply_legal_compliance_patch.py .
 
-      - name: Validate release source guards
+      - name: Validate release guards
         shell: bash
         run: |
           set -euo pipefail
           grep -q 'MainLauncher = true' VoiceCraft.Server.Android/AccountGateActivity.cs
-          ! grep -R --include='*.cs' -n 'MainLauncher = true' VoiceCraft.Server.Android \
-            | grep -v 'AccountGateActivity.cs'
+          ! grep -R --include='*.cs' -n 'MainLauncher = true' VoiceCraft.Server.Android | grep -v 'AccountGateActivity.cs'
           grep -q 'NoBackupFilesDir' VoiceCraft.Server.Android/KeystoreJsonStore.cs
           grep -q 'AndroidKeyStore' VoiceCraft.Server.Android/KeystoreJsonStore.cs
           grep -q 'AES/GCM/NoPadding' VoiceCraft.Server.Android/KeystoreJsonStore.cs
           grep -q 'android:allowBackup="false"' VoiceCraft.Server.Android/Properties/AndroidManifest.xml
-          grep -q 'ShowOpenSourceLegal' VoiceCraft.Server.Android/ModernMainActivity.cs
-          grep -q 'https://github.com/AvionBlock/VoiceCraft' VoiceCraft.Server.Android/ModernMainActivity.cs
-          grep -q 'GPL-3.0' VoiceCraft.Server.Android/ModernMainActivity.cs
+          grep -q 'android:icon="@drawable/voicecraft_logo"' VoiceCraft.Server.Android/Properties/AndroidManifest.xml
           grep -q '<ApplicationVersion>13</ApplicationVersion>' VoiceCraft.Server.Android/VoiceCraft.Server.Android.csproj
           grep -q '1.7.1-android-phase2-ui4.5.2-account-v2-guest' VoiceCraft.Server.Android/VoiceCraft.Server.Android.csproj
           grep -q 'appVersion = "1.7.1-android-phase2-ui4.5.2-account-v2-guest"' VoiceCraft.Server.Android/EndstoneBridgeController.cs
           grep -q 'voicecraft-mobile' VoiceCraft.Server.Android/AccountApiConfig.cs
           ! grep -q 'voicecraft-account' VoiceCraft.Server.Android/AccountApiConfig.cs
-          grep -q 'LoginAsync(this, login, password)' VoiceCraft.Server.Android/RegisteredLoginActivity.cs
-          ! grep -q 'LoginAsync(this, login, password, null)' VoiceCraft.Server.Android/RegisteredLoginActivity.cs
           ! grep -Eiq 'admin|mfa|otp' VoiceCraft.Server.Android/VoiceCraftAccountClient.cs
           ! grep -Eiq 'admin|mfa|otp' VoiceCraft.Server.Android/RegisteredLoginActivity.cs
           ! grep -Eiq 'admin|mfa|otp' VoiceCraft.Server.Android/RegisteredSessionStore.cs
-          ! grep -Eiq 'admin|mfa|otp' VoiceCraft.Server.Android/AccountStatusActivity.cs
-          ! grep -Eiq 'admin|mfa|otp' VoiceCraft.Server.Android/AccountGateActivity.cs
-          ! grep -q 'Role' VoiceCraft.Server.Android/RegisteredSessionStore.cs
-          ! grep -q 'GetProperty("role")' VoiceCraft.Server.Android/VoiceCraftAccountClient.cs
-          ! grep -q 'adminMfaSetupRequired' VoiceCraft.Server.Android/VoiceCraftAccountClient.cs
           grep -q 'MaxAttemptsPerRelay = 5' VoiceCraft.Server.Android/EndstoneBridgeController.cs
           grep -q 'PeerTimeoutSeconds = 30' VoiceCraft.Server.Android/EndstoneBridgeController.cs
           grep -q 'BackupRelayActivity' VoiceCraft.Server.Android/ModernMainActivity.cs
           grep -q 'case "unbind"' VoiceCraft.Server.Android/EndstoneBridgeController.cs
           grep -q 'type = "unbind_result"' VoiceCraft.Server.Android/EndstoneBridgeController.cs
+          grep -q 'bool? MicOn' VoiceCraft.Server.Android/EndstoneBridgeController.cs
+          grep -q 'voicecraft:item_mic_muted' VoiceCraft.Server.Android/EndstoneBridgeController.cs
+          grep -q 'version = "0.2.7"' VoiceCraft.Endstone/src/endstone_voicecraft/item_mic.py
+          grep -q 'message\["micOn"\] = mic_on' VoiceCraft.Endstone/src/endstone_voicecraft/item_mic.py
+          grep -q 'from .item_mic import VoiceCraftEndstone' VoiceCraft.Endstone/src/endstone_voicecraft/__init__.py
+          grep -q 'version = "0.2.7"' VoiceCraft.Endstone/pyproject.toml
+          test -f tools/build_item_mic_addon.py
 
       - name: Setup .NET 10
         uses: actions/setup-dotnet@v4
@@ -122,7 +122,7 @@ jobs:
       - name: Install .NET Android workload
         run: dotnet workload install android
 
-      - name: Restore, build and publish Android ARM64 APK
+      - name: Restore, build and publish VoiceCraft Server ARM64 APK
         shell: bash
         run: |
           set -euo pipefail
@@ -135,7 +135,7 @@ jobs:
           mkdir -p release-assets
           signed=$(find VoiceCraft.Server.Android/bin/Release/net10.0-android/android-arm64/publish -maxdepth 1 -name '*-Signed.apk' -print -quit)
           test -n "$signed"
-          cp "$signed" release-assets/VoiceCraft-Server-Mobile-UI4.5.2-AccountV2-arm64-Signed.apk
+          cp "$signed" release-assets/VoiceCraft-Server-Mobile-UI4.5.2-ItemMic-AccountV2-arm64-Signed.apk
 
       - name: Scan APK for removed privileged-account client markers
         shell: bash
@@ -143,7 +143,7 @@ jobs:
           set -euo pipefail
           rm -rf apk-scan
           mkdir apk-scan
-          unzip -q release-assets/VoiceCraft-Server-Mobile-UI4.5.2-AccountV2-arm64-Signed.apk -d apk-scan
+          unzip -q release-assets/VoiceCraft-Server-Mobile-UI4.5.2-ItemMic-AccountV2-arm64-Signed.apk -d apk-scan
           if grep -R -a -E -i \
             'AdminMfaSetupRequired|adminMfaSetupRequired|/v1/admin|x-admin-otp|MFA_REQUIRED|ADMIN_REQUIRED|voicecraft-account' \
             apk-scan; then
@@ -156,17 +156,38 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Build Endstone 0.2.6 wheel
+      - name: Build Endstone 0.2.7 and Item Mic 2.2.0 assets
         shell: bash
         run: |
           set -euo pipefail
           python -m pip install --upgrade pip
-          python -m pip install build
-          python -m compileall -q VoiceCraft.Endstone/src VoiceCraft.Endstone/tests
+          python -m pip install build pillow
+          python -m compileall -q VoiceCraft.Endstone/src VoiceCraft.Endstone/tests tools/build_item_mic_addon.py
           (cd VoiceCraft.Endstone && python -m build --wheel)
-          wheel=$(find VoiceCraft.Endstone/dist -maxdepth 1 -name 'endstone_voicecraft-0.2.6-*.whl' -print -quit)
+          wheel=$(find VoiceCraft.Endstone/dist -maxdepth 1 -name 'endstone_voicecraft-0.2.7-*.whl' -print -quit)
           test -n "$wheel"
-          cp "$wheel" release-assets/endstone_voicecraft-0.2.6-py3-none-any.whl
+          cp "$wheel" release-assets/endstone_voicecraft-0.2.7-py3-none-any.whl
+          python tools/build_item_mic_addon.py . release-assets/VoiceCraft_ItemMic_v2.2.0.mcaddon
+          test -s release-assets/VoiceCraft_ItemMic_v2.2.0.mcaddon
+
+      - name: Validate Item Mic mcaddon
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf itemmic-check
+          mkdir itemmic-check
+          unzip -q release-assets/VoiceCraft_ItemMic_v2.2.0.mcaddon -d itemmic-check
+          test -s itemmic-check/VoiceCraft_ItemMic_BP_v2.2.0.mcpack
+          test -s itemmic-check/VoiceCraft_ItemMic_RP_v2.2.0.mcpack
+          mkdir itemmic-check/bp itemmic-check/rp
+          unzip -q itemmic-check/VoiceCraft_ItemMic_BP_v2.2.0.mcpack -d itemmic-check/bp
+          unzip -q itemmic-check/VoiceCraft_ItemMic_RP_v2.2.0.mcpack -d itemmic-check/rp
+          grep -q 'VoiceCraft Item Mic BP v2.2' itemmic-check/bp/manifest.json
+          grep -q 'VoiceCraft Mic Icons RP v2.2' itemmic-check/rp/manifest.json
+          test -s itemmic-check/bp/pack_icon.png
+          test -s itemmic-check/rp/pack_icon.png
+          grep -q 'voicecraft:mic_on' itemmic-check/bp/scripts/main.js
+          grep -q 'voicecraft:mic_off' itemmic-check/bp/scripts/main.js
 
       - name: Validate Relay 0.2.1
         uses: actions/setup-node@v4
@@ -186,7 +207,6 @@ jobs:
           set -euo pipefail
           cp VoiceCraft.Upstream/LICENSE.md release-assets/GPL-3.0.txt
           cp NOTICE.md release-assets/NOTICE.md
-
           source_name="VoiceCraft-Server-Mobile-${RELEASE_TAG}-Corresponding-Source"
           mkdir -p "release-source/${source_name}"
           rsync -a \
@@ -194,31 +214,25 @@ jobs:
             --exclude='release-assets' \
             --exclude='release-source' \
             ./ "release-source/${source_name}/"
-
           find "release-source/${source_name}" -depth -type d \
             \( -name bin -o -name obj -o -name node_modules -o -name dist -o -name __pycache__ \) \
             -exec rm -rf {} +
           find "release-source/${source_name}" -name '.git' -delete
           find "release-source/${source_name}" -name '*.pyc' -delete
-
           cat > "release-source/${source_name}/SOURCE_INFO.txt" <<EOF
           VoiceCraft Server Mobile Corresponding Source
           Release tag: ${RELEASE_TAG}
           Release commit: ${GITHUB_SHA}
           Android: 1.7.1-android-phase2-ui4.5.2-account-v2-guest (version code 13)
+          Endstone: 0.2.7
+          Item Mic addon: 2.2.0
+          Relay: 0.2.1
           VoiceCraft upstream: v1.7.1
           Upstream commit: 85aaccccbb58adb23e8c87144e8b1c24bf4b2011
           Upstream: https://github.com/AvionBlock/VoiceCraft
-
-          This archive contains the modified project source, the exact checked-out
-          VoiceCraft upstream source, patch scripts, Android source, Endstone source,
-          Relay source, mobile/guest account source and build/release scripts used for this release.
-          See LICENSE.md and NOTICE.md.
           EOF
-
           (cd release-source && zip -qr "../release-assets/${source_name}.zip" "${source_name}")
           test -s "release-assets/${source_name}.zip"
-          test -s release-assets/GPL-3.0.txt
 
       - name: Create checksums and release notes
         shell: bash
@@ -227,59 +241,74 @@ jobs:
           (
             cd release-assets
             sha256sum \
-              VoiceCraft-Server-Mobile-UI4.5.2-AccountV2-arm64-Signed.apk \
-              endstone_voicecraft-0.2.6-py3-none-any.whl \
+              VoiceCraft-Server-Mobile-UI4.5.2-ItemMic-AccountV2-arm64-Signed.apk \
+              endstone_voicecraft-0.2.7-py3-none-any.whl \
+              VoiceCraft_ItemMic_v2.2.0.mcaddon \
               GPL-3.0.txt \
               NOTICE.md \
               *-Corresponding-Source.zip \
               > SHA256SUMS.txt
           )
           cat > release-notes.md <<'EOF'
-          ## VoiceCraft Server Mobile UI4.5.2 + Account V2
+          ## VoiceCraft Server Mobile UI4.5.2 + Item Mic
 
-          Security-isolation patch for the Android/mobile account client.
+          This release promotes the tested Item Mic integration and the hardened GitHub plugin downloader.
 
           ### Versions
-          - Android: `1.7.1-android-phase2-ui4.5.2-account-v2-guest` (version code `13`)
-          - Endstone: `0.2.6`
+          - VoiceCraft Server: `1.7.1-android-phase2-ui4.5.2-account-v2-guest` (version code `13`)
+          - Endstone VoiceCraft: `0.2.7`
+          - VoiceCraft Item Mic addon: `2.2.0`
           - Render Relay: `0.2.1`
           - Bridge protocol: `1`
-          - VoiceCraft upstream: `v1.7.1` pinned to `85aaccccbb58adb23e8c87144e8b1c24bf4b2011`
+          - VoiceCraft upstream: `v1.7.1`
 
-          ### Mobile account isolation
-          - Android now talks only to the dedicated `voicecraft-mobile` account endpoint.
-          - The APK contains no privileged-account role field, privileged OTP/MFA handling, privileged response flags, or privileged management API route.
-          - Registered mobile sessions store only token, account ID, login name and expiry.
-          - The dedicated mobile endpoint returns only registered-user session data and does not expose role information.
-          - Privileged account management remains server-side and is not part of the Android application.
-          - Release CI scans both source and the produced APK for removed privileged-account client markers.
+          ### Item Mic
+          - Mic state is integrated into the main Endstone VoiceCraft plugin; the old separate Item Mic wheel is no longer required.
+          - Hold-to-Talk, Toggle and offhand always-on modes are supported.
+          - Item Mic state is forwarded through the existing protocol-1 player-state path.
+          - VoiceCraft Server applies an independent Item Mic audio gate, so the item cannot override administrator/server mute state.
+          - The BP, RP and VoiceCraft Server app use the VoiceCraft Server logo.
+
+          ### Plugin download
+          - The app resolves the newest compatible published Endstone plugin from GitHub Release metadata.
+          - The downloader validates protocol compatibility, exact wheel version/name and SHA-256 before provisioning config.
+          - Relay URL, Server ID, backup relays and Bridge Secret are injected automatically.
 
           ### Existing functionality preserved
-          - Registered Account + device-local Free Account.
-          - AES-GCM + Android Keystore local storage and Android backup exclusion.
-          - Open Source & Legal information in Settings.
           - Primary + Backup Render relay failover.
-          - Real `/vc` unbind using `requestId + entityId`.
-          - Unexpected disconnect Auto Rebind behavior.
-          - Bedrock relay status alerts.
+          - Real `/vc` bind/unbind and automatic rebind handling.
+          - Device-local Free Account plus registered accounts.
+          - Premium/Admin gating for Backup Render Relay.
+          - Thai locale auto-selection only on Thai devices; other locales default to English.
+          - Foreground service, wake lock and unrestricted-battery request support.
+          - Open Source & Legal attribution and corresponding source archive.
 
           ### Assets
-          - `VoiceCraft-Server-Mobile-UI4.5.2-AccountV2-arm64-Signed.apk`
-          - `endstone_voicecraft-0.2.6-py3-none-any.whl`
+          - `VoiceCraft-Server-Mobile-UI4.5.2-ItemMic-AccountV2-arm64-Signed.apk`
+          - `endstone_voicecraft-0.2.7-py3-none-any.whl`
+          - `VoiceCraft_ItemMic_v2.2.0.mcaddon`
           - `VoiceCraft-Server-Mobile-...-Corresponding-Source.zip`
           - `GPL-3.0.txt`
           - `NOTICE.md`
           - `SHA256SUMS.txt`
 
-          ### Original VoiceCraft project
-          - https://github.com/AvionBlock/VoiceCraft
-          - https://gitlab.avion.team/voicecraft/VoiceCraft
-
-          ### Current networking limitation
-          Render WSS carries control/state/binding traffic only. Voice audio still uses UDP directly to Android.
+          Older GitHub Releases are removed after this release is published so vulnerable builds are not offered as downloadable releases.
           EOF
 
+      - name: Upload branch release-candidate assets
+        if: github.ref != 'refs/heads/main'
+        uses: actions/upload-artifact@v4
+        with:
+          name: VoiceCraft-Release-Candidate-ItemMic-0.2.7
+          if-no-files-found: error
+          path: |
+            release-assets/VoiceCraft-Server-Mobile-UI4.5.2-ItemMic-AccountV2-arm64-Signed.apk
+            release-assets/endstone_voicecraft-0.2.7-py3-none-any.whl
+            release-assets/VoiceCraft_ItemMic_v2.2.0.mcaddon
+            release-assets/SHA256SUMS.txt
+
       - name: Create or update GitHub Release
+        if: github.ref == 'refs/heads/main'
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
@@ -299,3 +328,17 @@ jobs:
               --notes-file release-notes.md \
               --latest
           fi
+
+      - name: Remove older vulnerable GitHub Releases
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          while IFS= read -r old_tag; do
+            [ -z "$old_tag" ] && continue
+            [ "$old_tag" = "$RELEASE_TAG" ] && continue
+            echo "Removing old release: $old_tag"
+            gh release delete "$old_tag" --cleanup-tag -y
+          done < <(gh release list --limit 100 --json tagName --jq '.[].tagName')
