@@ -65,9 +65,9 @@ internal static class ConfiguredPluginDownloadInjector
 
             replacement.Click += (_, _) => BeginDownload(activity);
         }
-        catch
+        catch (Exception ex)
         {
-            // Optional UI enhancement; never interrupt the server controls.
+            AndroidRuntimeLog.Append("UI", $"Configured plugin button injection skipped: {DescribeException(ex)}");
         }
     }
 
@@ -91,7 +91,7 @@ internal static class ConfiguredPluginDownloadInjector
         }
         catch (Exception ex)
         {
-            AndroidRuntimeLog.Append("UI", $"Configured plugin setup failed before download: {ex.GetType().Name}");
+            AndroidRuntimeLog.Append("UI", $"Configured plugin setup failed before download: {DescribeException(ex)}");
             ShowMissingConfiguration(activity);
         }
     }
@@ -177,6 +177,12 @@ internal static class ConfiguredPluginDownloadInjector
 
         return null;
     }
+
+    private static string DescribeException(Exception ex)
+    {
+        var message = ex.Message?.Replace('\r', ' ').Replace('\n', ' ').Trim() ?? string.Empty;
+        return string.IsNullOrWhiteSpace(message) ? ex.GetType().FullName ?? ex.GetType().Name : $"{ex.GetType().FullName}: {message}";
+    }
 }
 
 internal static class ConfiguredPluginDownloader
@@ -191,81 +197,106 @@ internal static class ConfiguredPluginDownloader
 
     private static readonly HttpClient Client = CreateClient();
 
+    private sealed class ProgressUi
+    {
+        public Dialog? Dialog { get; init; }
+        public ProgressBar? Progress { get; init; }
+        public TextView? Percent { get; init; }
+        public TextView? Status { get; init; }
+        public ProgressDialog? NativeProgress { get; init; }
+    }
+
     public static async Task DownloadAsync(Activity activity, string configuredToml)
     {
         var thai = ServerPreferences.GetLanguage(activity) == "th";
-        AlertDialog? dialog = null;
-        ProgressBar? progress = null;
-        TextView? percent = null;
-        TextView? status = null;
+        var stage = thai ? "กำลังเปิดหน้าต่างดาวน์โหลด" : "Opening download window";
+        ProgressUi? ui = null;
 
         try
         {
-            (dialog, progress, percent, status) = ShowProgress(activity, thai);
-            Update(activity, progress, percent, status, 3,
-                thai ? "กำลังตรวจสอบการตั้งค่า Render Relay และ Secret" : "Checking Render Relay and secret");
-            await Task.Delay(120);
+            ui = TryShowProgress(activity, thai);
 
-            Update(activity, progress, percent, status, 8,
-                thai ? "กำลังเตรียม Plugin Config สำหรับเซิร์ฟเวอร์นี้" : "Preparing the plugin configuration for this server");
-            await Task.Delay(120);
+            stage = thai ? "ตรวจสอบการตั้งค่า Render Relay และ Secret" : "Checking Render Relay and secret";
+            Update(activity, ui, 3, thai ? "กำลังตรวจสอบการตั้งค่า Render Relay และ Secret" : "Checking Render Relay and secret");
+            await Task.Delay(80);
 
-            Update(activity, progress, percent, status, 12,
-                thai ? "กำลังเชื่อมต่อ GitHub เพื่อดาวน์โหลด Endstone Plugin" : "Connecting to GitHub to download the Endstone plugin");
+            stage = thai ? "เตรียม Plugin Config" : "Preparing plugin config";
+            Update(activity, ui, 8, thai ? "กำลังเตรียม Plugin Config สำหรับเซิร์ฟเวอร์นี้" : "Preparing the plugin configuration for this server");
+            await Task.Delay(80);
 
-            var wheel = await DownloadWheelAsync(activity, progress, percent, status, thai);
+            stage = thai ? "ดาวน์โหลด Endstone Plugin จาก GitHub" : "Downloading Endstone plugin from GitHub";
+            Update(activity, ui, 12, thai ? "กำลังเชื่อมต่อ GitHub เพื่อดาวน์โหลด Endstone Plugin" : "Connecting to GitHub to download the Endstone plugin");
+            var wheel = await DownloadWheelAsync(activity, ui, thai);
 
-            Update(activity, progress, percent, status, 70,
-                thai ? "กำลังตรวจสอบ SHA-256 ของ Plugin ต้นฉบับ" : "Verifying the original plugin SHA-256");
+            stage = thai ? "ตรวจสอบ SHA-256 ของ Plugin" : "Verifying plugin SHA-256";
+            Update(activity, ui, 70, thai ? "กำลังตรวจสอบ SHA-256 ของ Plugin ต้นฉบับ" : "Verifying the original plugin SHA-256");
             VerifySourceWheel(wheel);
-            await Task.Delay(120);
+            await Task.Delay(80);
 
-            Update(activity, progress, percent, status, 78,
+            stage = thai ? "ใส่ Render Relay และ Bridge Secret ลง Plugin" : "Injecting relay and secret into plugin";
+            Update(activity, ui, 78,
                 thai
                     ? "กำลังใส่ Render Relay, Server ID, Backup Relay และ Bridge Secret ลงใน Plugin"
                     : "Injecting Render Relay, Server ID, backup relays and Bridge Secret into the plugin");
             var provisionedWheel = PatchWheel(wheel, configuredToml);
-            await Task.Delay(140);
+            await Task.Delay(80);
 
-            Update(activity, progress, percent, status, 90,
-                thai ? "กำลังอัปเดต Wheel RECORD และตรวจสอบแพ็กเกจ" : "Updating Wheel RECORD and validating the package");
+            stage = thai ? "ตรวจสอบ Wheel RECORD" : "Validating wheel RECORD";
+            Update(activity, ui, 90, thai ? "กำลังอัปเดต Wheel RECORD และตรวจสอบแพ็กเกจ" : "Updating Wheel RECORD and validating the package");
             ValidateProvisionedWheel(provisionedWheel, configuredToml);
-            await Task.Delay(120);
+            await Task.Delay(80);
 
-            Update(activity, progress, percent, status, 95,
-                thai ? "กำลังบันทึก Plugin ลงโฟลเดอร์ Downloads" : "Saving the plugin to Downloads");
+            stage = thai ? "บันทึก Plugin ลง Downloads" : "Saving plugin to Downloads";
+            Update(activity, ui, 95, thai ? "กำลังบันทึก Plugin ลงโฟลเดอร์ Downloads" : "Saving the plugin to Downloads");
             var location = await SaveToDownloadsAsync(activity, provisionedWheel);
 
-            Update(activity, progress, percent, status, 100,
-                thai ? "เสร็จแล้ว — Plugin พร้อมนำเข้า Endstone Server" : "Done — plugin is ready for your Endstone server");
-            AndroidRuntimeLog.Append("UI", "Configured Endstone plugin created successfully");
-            await Task.Delay(650);
+            stage = thai ? "เสร็จสิ้น" : "Complete";
+            Update(activity, ui, 100, thai ? "เสร็จแล้ว — Plugin พร้อมนำเข้า Endstone Server" : "Done — plugin is ready for your Endstone server");
+            AndroidRuntimeLog.Append("UI", $"Configured Endstone plugin created successfully at {location}");
+            await Task.Delay(350);
 
             activity.RunOnUiThread(() =>
             {
-                dialog?.Dismiss();
-                new AlertDialog.Builder(activity)
-                    .SetTitle(thai ? "ดาวน์โหลด Plugin สำเร็จ" : "Plugin download complete")
-                    .SetMessage(thai
-                        ? $"บันทึกแล้วที่:\n{location}\n\nไฟล์นี้มี Render Relay, Server ID, Backup Relay และ Bridge Secret ของเซิร์ฟเวอร์นี้อยู่ภายในแล้ว สามารถนำไฟล์ .whl ไปใส่ใน Endstone Server ได้เลย\n\nไฟล์มี Bridge Secret อยู่ภายใน กรุณาอย่าแชร์กับบุคคลที่ไม่ไว้ใจ"
-                        : $"Saved to:\n{location}\n\nThis .whl already contains this server's Render Relay, Server ID, backup relays and Bridge Secret and can be placed directly in the Endstone server.\n\nThe file contains your Bridge Secret. Do not share it with untrusted people.")
-                    .SetPositiveButton(thai ? "ตกลง" : "OK", (_, _) => { })
-                    .Show();
+                DismissSafely(ui);
+                try
+                {
+                    new AlertDialog.Builder(activity)
+                        .SetTitle(thai ? "ดาวน์โหลด Plugin สำเร็จ" : "Plugin download complete")
+                        .SetMessage(thai
+                            ? $"บันทึกแล้วที่:\n{location}\n\nไฟล์นี้มี Render Relay, Server ID, Backup Relay และ Bridge Secret ของเซิร์ฟเวอร์นี้อยู่ภายในแล้ว สามารถนำไฟล์ .whl ไปใส่ใน Endstone Server ได้เลย\n\nไฟล์มี Bridge Secret อยู่ภายใน กรุณาอย่าแชร์กับบุคคลที่ไม่ไว้ใจ"
+                            : $"Saved to:\n{location}\n\nThis .whl already contains this server's Render Relay, Server ID, backup relays and Bridge Secret and can be placed directly in the Endstone server.\n\nThe file contains your Bridge Secret. Do not share it with untrusted people.")
+                        .SetPositiveButton(thai ? "ตกลง" : "OK", (_, _) => { })
+                        .Show();
+                }
+                catch (Exception ex)
+                {
+                    AndroidRuntimeLog.Append("UI", $"Configured plugin completion dialog failed: {DescribeException(ex)}");
+                    Toast.MakeText(activity, thai ? "ดาวน์โหลด Plugin สำเร็จ" : "Plugin download complete", ToastLength.Long)?.Show();
+                }
             });
         }
         catch (Exception ex)
         {
-            AndroidRuntimeLog.Append("UI", $"Configured Endstone plugin download failed: {ex.GetType().Name}");
+            var detail = DescribeException(ex);
+            AndroidRuntimeLog.Append("UI", $"Configured Endstone plugin download failed at [{stage}]: {detail}");
             activity.RunOnUiThread(() =>
             {
-                dialog?.Dismiss();
-                new AlertDialog.Builder(activity)
-                    .SetTitle(thai ? "ดาวน์โหลด Plugin ไม่สำเร็จ" : "Plugin download failed")
-                    .SetMessage(thai
-                        ? $"เกิดข้อผิดพลาดระหว่างสร้าง Plugin ที่ตั้งค่าไว้แล้ว\n\n{SafeMessage(ex)}\n\nตรวจสอบอินเทอร์เน็ตและลองอีกครั้ง"
-                        : $"An error occurred while creating the preconfigured plugin.\n\n{SafeMessage(ex)}\n\nCheck your internet connection and try again.")
-                    .SetPositiveButton(thai ? "ปิด" : "CLOSE", (_, _) => { })
-                    .Show();
+                DismissSafely(ui);
+                var message = SafeMessage(ex);
+                try
+                {
+                    new AlertDialog.Builder(activity)
+                        .SetTitle(thai ? "ดาวน์โหลด Plugin ไม่สำเร็จ" : "Plugin download failed")
+                        .SetMessage(thai
+                            ? $"เกิดข้อผิดพลาดในขั้นตอน:\n{stage}\n\n{message}\n\nลองอีกครั้ง หากยังเกิดปัญหาให้ส่งบรรทัด Log ที่มีคำว่า 'failed at' มาให้ตรวจสอบ"
+                            : $"The download failed during:\n{stage}\n\n{message}\n\nTry again. If it still fails, send the log line containing 'failed at'.")
+                        .SetPositiveButton(thai ? "ปิด" : "CLOSE", (_, _) => { })
+                        .Show();
+                }
+                catch
+                {
+                    Toast.MakeText(activity, thai ? $"ดาวน์โหลดล้มเหลว: {stage}" : $"Download failed: {stage}", ToastLength.Long)?.Show();
+                }
             });
         }
     }
@@ -274,80 +305,125 @@ internal static class ConfiguredPluginDownloader
     {
         var client = new HttpClient
         {
-            Timeout = TimeSpan.FromSeconds(60)
+            Timeout = TimeSpan.FromSeconds(90)
         };
         client.DefaultRequestHeaders.UserAgent.ParseAdd("VoiceCraft-Server-Mobile/1.7.1");
         return client;
     }
 
-    private static (AlertDialog Dialog, ProgressBar Progress, TextView Percent, TextView Status) ShowProgress(Activity activity, bool thai)
+    private static ProgressUi? TryShowProgress(Activity activity, bool thai)
     {
-        var density = activity.Resources?.DisplayMetrics?.Density ?? 1f;
-        int Dp(int value) => (int)(value * density + 0.5f);
-
-        var panel = new LinearLayout(activity)
+        try
         {
-            Orientation = Orientation.Vertical
-        };
-        panel.SetPadding(Dp(22), Dp(12), Dp(22), Dp(10));
+            var density = activity.Resources?.DisplayMetrics?.Density ?? 1f;
+            int Dp(int value) => (int)(value * density + 0.5f);
 
-        var percent = new TextView(activity)
-        {
-            Text = "0%",
-            TextSize = 26,
-            Gravity = GravityFlags.CenterHorizontal
-        };
-        percent.SetTypeface(global::Android.Graphics.Typeface.Default, global::Android.Graphics.TypefaceStyle.Bold);
-        panel.AddView(percent);
+            var panel = new LinearLayout(activity) { Orientation = Orientation.Vertical };
+            panel.SetPadding(Dp(22), Dp(12), Dp(22), Dp(10));
 
-        var progress = new ProgressBar(activity, null, global::Android.Resource.Attribute.ProgressBarStyleHorizontal)
-        {
-            Max = 100,
-            Progress = 0,
-            Indeterminate = false
-        };
-        panel.AddView(progress, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MatchParent, Dp(28))
-        {
-            TopMargin = Dp(8)
-        });
+            var percent = new TextView(activity)
+            {
+                Text = "0%",
+                TextSize = 26,
+                Gravity = GravityFlags.CenterHorizontal
+            };
+            percent.SetTypeface(global::Android.Graphics.Typeface.Default, global::Android.Graphics.TypefaceStyle.Bold);
+            panel.AddView(percent);
 
-        var status = new TextView(activity)
-        {
-            Text = thai ? "กำลังเตรียมการดาวน์โหลด..." : "Preparing download...",
-            TextSize = 13
-        };
-        status.SetPadding(0, Dp(10), 0, 0);
-        panel.AddView(status);
+            var progress = new ProgressBar(activity, null, global::Android.Resource.Attribute.ProgressBarStyleHorizontal)
+            {
+                Max = 100,
+                Progress = 0,
+                Indeterminate = false
+            };
+            panel.AddView(progress, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MatchParent, Dp(28)) { TopMargin = Dp(8) });
 
-        var dialog = new AlertDialog.Builder(activity)
-            .SetTitle(thai ? "ดาวน์โหลด Endstone Plugin" : "Download Endstone Plugin")
-            .SetView(panel)
-            .SetCancelable(false)
-            .Create();
-        dialog.SetCanceledOnTouchOutside(false);
-        dialog.Show();
-        return (dialog, progress, percent, status);
+            var status = new TextView(activity)
+            {
+                Text = thai ? "กำลังเตรียมการดาวน์โหลด..." : "Preparing download...",
+                TextSize = 13
+            };
+            status.SetPadding(0, Dp(10), 0, 0);
+            panel.AddView(status);
+
+            var dialog = new AlertDialog.Builder(activity)
+                .SetTitle(thai ? "ดาวน์โหลด Endstone Plugin" : "Download Endstone Plugin")
+                .SetView(panel)
+                .SetCancelable(false)
+                .Create();
+            dialog.Show();
+            dialog.SetCanceledOnTouchOutside(false);
+
+            return new ProgressUi { Dialog = dialog, Progress = progress, Percent = percent, Status = status };
+        }
+        catch (Exception ex)
+        {
+            AndroidRuntimeLog.Append("UI", $"Rich plugin progress UI unavailable; using native fallback: {DescribeException(ex)}");
+        }
+
+        try
+        {
+#pragma warning disable CS0618
+            var progressDialog = new ProgressDialog(activity);
+            progressDialog.SetTitle(thai ? "ดาวน์โหลด Endstone Plugin" : "Download Endstone Plugin");
+            progressDialog.SetProgressStyle(ProgressDialogStyle.Horizontal);
+            progressDialog.Max = 100;
+            progressDialog.Progress = 0;
+            progressDialog.Indeterminate = false;
+            progressDialog.SetCancelable(false);
+            progressDialog.SetMessage(thai ? "กำลังเตรียมการดาวน์โหลด... 0%" : "Preparing download... 0%");
+            progressDialog.Show();
+#pragma warning restore CS0618
+            return new ProgressUi { Dialog = progressDialog, NativeProgress = progressDialog };
+        }
+        catch (Exception ex)
+        {
+            AndroidRuntimeLog.Append("UI", $"Native plugin progress UI unavailable; download will continue: {DescribeException(ex)}");
+            return null;
+        }
     }
 
-    private static void Update(Activity activity, ProgressBar? progress, TextView? percent, TextView? status, int value, string message)
+    private static void Update(Activity activity, ProgressUi? ui, int value, string message)
     {
+        if (ui == null)
+            return;
+
+        var safeValue = Math.Clamp(value, 0, 100);
         activity.RunOnUiThread(() =>
         {
-            if (progress != null)
-                progress.Progress = Math.Clamp(value, 0, 100);
-            if (percent != null)
-                percent.Text = $"{Math.Clamp(value, 0, 100)}%";
-            if (status != null)
-                status.Text = message;
+            try
+            {
+                if (ui.Progress != null)
+                    ui.Progress.Progress = safeValue;
+                if (ui.Percent != null)
+                    ui.Percent.Text = $"{safeValue}%";
+                if (ui.Status != null)
+                    ui.Status.Text = message;
+                if (ui.NativeProgress != null)
+                {
+                    ui.NativeProgress.Progress = safeValue;
+                    ui.NativeProgress.SetMessage($"{message}\n{safeValue}%");
+                }
+            }
+            catch (Exception ex)
+            {
+                AndroidRuntimeLog.Append("UI", $"Plugin progress update skipped: {DescribeException(ex)}");
+            }
         });
     }
 
-    private static async Task<byte[]> DownloadWheelAsync(
-        Activity activity,
-        ProgressBar? progress,
-        TextView? percent,
-        TextView? status,
-        bool thai)
+    private static void DismissSafely(ProgressUi? ui)
+    {
+        try
+        {
+            ui?.Dialog?.Dismiss();
+        }
+        catch
+        {
+        }
+    }
+
+    private static async Task<byte[]> DownloadWheelAsync(Activity activity, ProgressUi? ui, bool thai)
     {
         using var response = await Client.GetAsync(SourceWheelUrl, HttpCompletionOption.ResponseHeadersRead);
         response.EnsureSuccessStatusCode();
@@ -373,12 +449,11 @@ internal static class ConfiguredPluginDownloader
             var amount = total is > 0
                 ? $"{downloaded / 1024.0:0.0} / {total.Value / 1024.0:0.0} KB"
                 : $"{downloaded / 1024.0:0.0} KB";
-            Update(activity, progress, percent, status, percentValue,
+            Update(activity, ui, percentValue,
                 thai ? $"กำลังดาวน์โหลด Endstone Plugin จาก GitHub\n{amount}" : $"Downloading Endstone Plugin from GitHub\n{amount}");
         }
 
-        Update(activity, progress, percent, status, 65,
-            thai ? "ดาวน์โหลด Plugin ครบแล้ว" : "Plugin download complete");
+        Update(activity, ui, 65, thai ? "ดาวน์โหลด Plugin ครบแล้ว" : "Plugin download complete");
         return buffer.ToArray();
     }
 
@@ -488,42 +563,67 @@ internal static class ConfiguredPluginDownloader
     {
         if (Build.VERSION.SdkInt >= BuildVersionCodes.Q)
         {
-#pragma warning disable CA1416
-            var resolver = activity.ContentResolver;
-            var values = new ContentValues();
-            var downloadsDirectory = global::Android.OS.Environment.DirectoryDownloads;
-            values.Put(MediaStore.IMediaColumns.DisplayName, WheelFileName);
-            values.Put(MediaStore.IMediaColumns.MimeType, "application/octet-stream");
-            values.Put(MediaStore.IMediaColumns.RelativePath, $"{downloadsDirectory}/VoiceCraft");
-            values.Put(MediaStore.IMediaColumns.IsPending, 1);
-
-            var uri = resolver.Insert(MediaStore.Downloads.ExternalContentUri, values)
-                ?? throw new IOException("Android could not create a Downloads entry.");
             try
             {
-                await using var output = resolver.OpenOutputStream(uri, "w")
-                    ?? throw new IOException("Android could not open the Downloads file.");
-                await output.WriteAsync(wheel);
-                await output.FlushAsync();
+                return await SaveWithMediaStoreAsync(activity, wheel);
+            }
+            catch (Exception ex)
+            {
+                AndroidRuntimeLog.Append("UI", $"MediaStore plugin save failed; using app Downloads fallback: {DescribeException(ex)}");
+            }
+        }
 
-                values.Clear();
-                values.Put(MediaStore.IMediaColumns.IsPending, 0);
-                resolver.Update(uri, values, null, null);
-                return $"Downloads/VoiceCraft/{WheelFileName}";
+        return await SaveToAppDownloadsAsync(activity, wheel);
+    }
+
+    private static async Task<string> SaveWithMediaStoreAsync(Activity activity, byte[] wheel)
+    {
+#pragma warning disable CA1416
+        var resolver = activity.ContentResolver ?? throw new IOException("Android ContentResolver is unavailable.");
+        var values = new ContentValues();
+        var downloadsDirectory = global::Android.OS.Environment.DirectoryDownloads;
+        values.Put(MediaStore.IMediaColumns.DisplayName, WheelFileName);
+        values.Put(MediaStore.IMediaColumns.MimeType, "application/zip");
+        values.Put(MediaStore.IMediaColumns.RelativePath, $"{downloadsDirectory}/VoiceCraft");
+        values.Put(MediaStore.IMediaColumns.IsPending, 1);
+
+        var uri = resolver.Insert(MediaStore.Downloads.ExternalContentUri, values)
+            ?? throw new IOException("Android could not create a Downloads entry.");
+        try
+        {
+            await using var output = resolver.OpenOutputStream(uri, "w")
+                ?? throw new IOException("Android could not open the Downloads file.");
+            await output.WriteAsync(wheel);
+            await output.FlushAsync();
+
+            values.Clear();
+            values.Put(MediaStore.IMediaColumns.IsPending, 0);
+            resolver.Update(uri, values, null, null);
+            return $"Downloads/VoiceCraft/{WheelFileName}";
+        }
+        catch
+        {
+            try
+            {
+                resolver.Delete(uri, null, null);
             }
             catch
             {
-                resolver.Delete(uri, null, null);
-                throw;
             }
-#pragma warning restore CA1416
+            throw;
         }
+#pragma warning restore CA1416
+    }
 
-        var directory = activity.GetExternalFilesDir(global::Android.OS.Environment.DirectoryDownloads)
+    private static async Task<string> SaveToAppDownloadsAsync(Activity activity, byte[] wheel)
+    {
+        var root = activity.GetExternalFilesDir(global::Android.OS.Environment.DirectoryDownloads)
             ?? activity.FilesDir
             ?? throw new IOException("No writable download directory is available.");
-        if (!directory.Exists())
-            directory.Mkdirs();
+        var directory = new Java.IO.File(root, "VoiceCraft");
+        if (!directory.Exists() && !directory.Mkdirs())
+            throw new IOException("Android could not create the VoiceCraft download directory.");
+
         var path = Path.Combine(directory.AbsolutePath, WheelFileName);
         await File.WriteAllBytesAsync(path, wheel);
         return path;
@@ -531,13 +631,37 @@ internal static class ConfiguredPluginDownloader
 
     private static string SafeMessage(Exception ex)
     {
-        return ex switch
+        if (ex is HttpRequestException)
+            return "Network request failed.";
+        if (ex is TaskCanceledException)
+            return "Download timed out.";
+        if (ex is InvalidDataException invalidData)
+            return invalidData.Message;
+        if (ex is IOException io)
+            return io.Message;
+
+        var message = ex.Message?.Replace('\r', ' ').Replace('\n', ' ').Trim();
+        if (!string.IsNullOrWhiteSpace(message))
+            return $"{ex.GetType().Name}: {message}";
+        return ex.GetType().Name;
+    }
+
+    private static string DescribeException(Exception ex)
+    {
+        var message = ex.Message?.Replace('\r', ' ').Replace('\n', ' ').Trim() ?? string.Empty;
+        if (message.Length > 500)
+            message = message[..500];
+        var type = ex.GetType().FullName ?? ex.GetType().Name;
+        var inner = ex.InnerException;
+        if (inner != null)
         {
-            HttpRequestException => "Network request failed.",
-            TaskCanceledException => "Download timed out.",
-            InvalidDataException invalidData => invalidData.Message,
-            IOException io => io.Message,
-            _ => "Unexpected plugin download error."
-        };
+            var innerMessage = inner.Message?.Replace('\r', ' ').Replace('\n', ' ').Trim() ?? string.Empty;
+            if (innerMessage.Length > 300)
+                innerMessage = innerMessage[..300];
+            return string.IsNullOrWhiteSpace(innerMessage)
+                ? $"{type}: {message}; inner={inner.GetType().FullName}"
+                : $"{type}: {message}; inner={inner.GetType().FullName}: {innerMessage}";
+        }
+        return string.IsNullOrWhiteSpace(message) ? type : $"{type}: {message}";
     }
 }
