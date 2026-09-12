@@ -51,8 +51,8 @@ def main() -> None:
 
     # ModernMainActivity imports Android.OS, which also exposes Environment.
     # Fully qualify every generated System.Environment.NewLine reference while
-    # leaving already-qualified references untouched. This also repairs later
-    # UI5 refinement passes that use RemoveEmptyEntries/search filtering.
+    # leaving already-qualified references untouched. This makes the repair
+    # safe to run both before and after the UI5 refinement pass.
     text = re.sub(
         r"(?<!System\.)Environment\.NewLine",
         "global::System.Environment.NewLine",
@@ -67,10 +67,8 @@ def main() -> None:
 
     if broken_split in text or broken_join in text:
         raise RuntimeError("UI5 generated newline literals were not fully repaired")
-    if "text.Split(global::System.Environment.NewLine, StringSplitOptions.None);" not in text:
-        raise RuntimeError("UI5 split newline repair anchor missing")
-    if "text = string.Join(global::System.Environment.NewLine, rows);" not in text:
-        raise RuntimeError("UI5 join newline repair anchor missing")
+    if re.search(r"(?<!System\.)Environment\.NewLine", text):
+        raise RuntimeError("UI5 generated source still contains ambiguous Environment.NewLine")
     if "private View SettingsAction(" not in text:
         raise RuntimeError("UI5 SettingsAction helper missing")
 
