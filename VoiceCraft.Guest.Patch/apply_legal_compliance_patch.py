@@ -139,6 +139,12 @@ def main() -> None:
     if ui5_refinement.exists():
         subprocess.run([sys.executable, str(ui5_refinement), str(repo)], check=True)
 
+    # The refinement pass generates additional newline references, so run the
+    # source repair once more after it to keep System.Environment unambiguous
+    # from Android.OS.Environment.
+    if ui5_compile_fix.exists():
+        subprocess.run([sys.executable, str(ui5_compile_fix), str(repo)], check=True)
+
     print("Legal/Open Source patch applied.")
     print(f"Android display version: {DISPLAY_VERSION}")
     print(f"Android version code: {VERSION_CODE}")
