@@ -3,8 +3,8 @@ from pathlib import Path
 import re
 import sys
 
-DISPLAY_VERSION = "1.7.1-android-phase2-ui4.5.3-account-v2-guest"
-VERSION_CODE = 14
+DISPLAY_VERSION = "1.7.1-android-phase2-ui4.5.2-account-v2-guest"
+VERSION_CODE = 13
 
 
 def sub_required(text: str, pattern: str, replacement: str, label: str) -> str:
