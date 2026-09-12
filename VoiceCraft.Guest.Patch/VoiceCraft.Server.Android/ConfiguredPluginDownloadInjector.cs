@@ -52,17 +52,9 @@ internal static class ConfiguredPluginDownloadInjector
             };
             replacement.SetAllCaps(false);
             replacement.SetTextColor(oldButton.TextColors);
-            replacement.SetTypeface(oldButton.Typeface, oldButton.Typeface?.Style ?? Android.Graphics.TypefaceStyle.Normal);
+            replacement.SetTypeface(oldButton.Typeface, oldButton.Typeface?.Style ?? global::Android.Graphics.TypefaceStyle.Normal);
             replacement.SetPadding(oldButton.PaddingLeft, oldButton.PaddingTop, oldButton.PaddingRight, oldButton.PaddingBottom);
-
-            try
-            {
-                replacement.Background = oldButton.Background?.ConstantState?.NewDrawable()?.Mutate() ?? oldButton.Background;
-            }
-            catch
-            {
-                replacement.Background = oldButton.Background;
-            }
+            replacement.Background = oldButton.Background;
 
             var layout = oldButton.LayoutParameters;
             parent.RemoveViewAt(index);
@@ -305,7 +297,7 @@ internal static class ConfiguredPluginDownloader
             TextSize = 26,
             Gravity = GravityFlags.CenterHorizontal
         };
-        percent.SetTypeface(Android.Graphics.Typeface.Default, Android.Graphics.TypefaceStyle.Bold);
+        percent.SetTypeface(global::Android.Graphics.Typeface.Default, global::Android.Graphics.TypefaceStyle.Bold);
         panel.AddView(percent);
 
         var progress = new ProgressBar(activity, null, global::Android.Resource.Attribute.ProgressBarStyleHorizontal)
@@ -499,9 +491,10 @@ internal static class ConfiguredPluginDownloader
 #pragma warning disable CA1416
             var resolver = activity.ContentResolver;
             var values = new ContentValues();
+            var downloadsDirectory = global::Android.OS.Environment.DirectoryDownloads;
             values.Put(MediaStore.IMediaColumns.DisplayName, WheelFileName);
             values.Put(MediaStore.IMediaColumns.MimeType, "application/octet-stream");
-            values.Put(MediaStore.IMediaColumns.RelativePath, $"{global::Android.OS.Environment.DirectoryDownloads}/VoiceCraft");
+            values.Put(MediaStore.IMediaColumns.RelativePath, $"{downloadsDirectory}/VoiceCraft");
             values.Put(MediaStore.IMediaColumns.IsPending, 1);
 
             var uri = resolver.Insert(MediaStore.Downloads.ExternalContentUri, values)
