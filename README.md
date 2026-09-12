@@ -1,13 +1,11 @@
 # VoiceCraft Server Mobile
 
-VoiceCraft Server Mobile connects a **Minecraft Bedrock server** to **Android**, where the VoiceCraft server is running, by using an **Endstone plugin** and a **Render WebSocket relay**.
-
-To keep the architecture easy to understand, this README refers to the device running the VoiceCraft server simply as **Android**.
+VoiceCraft Server Mobile connects a **Minecraft Bedrock server** to a **VoiceCraft Server** by using an **Endstone plugin** and a **Render WebSocket relay**.
 
 The system uses two separate network paths:
 
-- **Minecraft state/control data**: Endstone → Render Relay → Android
-- **Voice audio**: VoiceCraft Client ↔ Android directly over VoiceCraft / LiteNetLib UDP
+- **Minecraft state/control data**: Endstone → Render Relay → VoiceCraft Server
+- **Voice audio**: VoiceCraft Client ↔ VoiceCraft Server directly over VoiceCraft / LiteNetLib UDP
 
 Render is a **control/state relay only**. It does not carry microphone audio.
 
@@ -27,8 +25,7 @@ Render Relay
         │
         │ secure WebSocket (WSS)
         ▼
-Android
-(VoiceCraft server runs here)
+VoiceCraft Server
         ▲
         │
         │ VoiceCraft / LiteNetLib UDP
@@ -42,22 +39,22 @@ VoiceCraft Clients
 |---|---|---|---|
 | Minecraft Bedrock Server | Minecraft server | Hosts the game world and players | Endstone |
 | Endstone VoiceCraft Plugin | Minecraft server | Reads player position, rotation, dimension and bind/unbind actions | Render Relay |
-| Render Relay | Render | Forwards Minecraft state and control messages between Endstone and Android | Endstone + Android |
-| Android | Android device | Runs the VoiceCraft server and applies Minecraft player state to VoiceCraft entities | Render Relay + VoiceCraft Clients |
-| VoiceCraft Client | Player device | Captures microphone audio and receives proximity voice | Android |
+| Render Relay | Render | Forwards Minecraft state and control messages between Endstone and VoiceCraft Server | Endstone + VoiceCraft Server |
+| VoiceCraft Server | Server host device | Runs the VoiceCraft server and applies Minecraft player state to VoiceCraft entities | Render Relay + VoiceCraft Clients |
+| VoiceCraft Client | Player device | Captures microphone audio and receives proximity voice | VoiceCraft Server |
 
 ## How the Connection Works
 
 | Step | What happens |
 |---|---|
 | 1 | Endstone connects to the configured Render Relay using WSS. |
-| 2 | Android connects to the same relay using the same `serverId` and bridge secret. |
-| 3 | Render places Endstone and Android in the same logical server room. |
+| 2 | VoiceCraft Server connects to the same relay using the same `serverId` and bridge secret. |
+| 3 | Render places Endstone and VoiceCraft Server in the same logical server room. |
 | 4 | Endstone sends Minecraft player state such as position, rotation, dimension and player identity. |
-| 5 | Render forwards that state to Android. |
-| 6 | Android updates the matching VoiceCraft entity with the Minecraft position and world state. |
+| 5 | Render forwards that state to VoiceCraft Server. |
+| 6 | VoiceCraft Server updates the matching VoiceCraft entity with the Minecraft position and world state. |
 | 7 | VoiceCraft uses those entity positions to calculate proximity/spatial voice. |
-| 8 | Voice audio travels directly between VoiceCraft clients and Android over UDP. |
+| 8 | Voice audio travels directly between VoiceCraft clients and VoiceCraft Server over UDP. |
 
 ## Player Binding
 
@@ -67,7 +64,7 @@ A Minecraft player and a VoiceCraft client must be linked before server-side pos
 VoiceCraft Client connects
         │
         ▼
-Android detects the VoiceCraft entity
+VoiceCraft Server detects the VoiceCraft entity
         │
         ▼
 A temporary binding key is generated
@@ -79,47 +76,47 @@ Player enters the key through /vc in Minecraft
 Endstone sends the bind request through Render
         │
         ▼
-Android links the Minecraft player to the VoiceCraft entity
+VoiceCraft Server links the Minecraft player to the VoiceCraft entity
 ```
 
-After binding, Endstone keeps sending the player's Minecraft position. Android applies that position to the linked VoiceCraft entity, allowing VoiceCraft to determine who should hear whom.
+After binding, Endstone keeps sending the player's Minecraft position. VoiceCraft Server applies that position to the linked VoiceCraft entity, allowing VoiceCraft to determine who should hear whom.
 
 ## Data Flow
 
 | Data | Source | Path | Destination |
 |---|---|---|---|
-| Player position | Minecraft / Endstone | Endstone → WSS → Render → WSS → Android | VoiceCraft entity |
-| Rotation | Minecraft / Endstone | Endstone → Render → Android | VoiceCraft entity |
-| Dimension | Minecraft / Endstone | Endstone → Render → Android | VoiceCraft world mapping |
-| Bind request | Minecraft `/vc` | Endstone → Render → Android | VoiceCraft entity binding |
-| Unbind request | Minecraft `/vc` | Endstone → Render → Android | VoiceCraft entity binding |
-| Relay status | Android / Endstone | Through Render | Opposite bridge peer |
-| Voice audio | VoiceCraft Client | UDP directly to Android | Android |
-| Routed voice audio | Android | UDP directly to clients | Nearby VoiceCraft Clients |
+| Player position | Minecraft / Endstone | Endstone → WSS → Render → WSS → VoiceCraft Server | VoiceCraft entity |
+| Rotation | Minecraft / Endstone | Endstone → Render → VoiceCraft Server | VoiceCraft entity |
+| Dimension | Minecraft / Endstone | Endstone → Render → VoiceCraft Server | VoiceCraft world mapping |
+| Bind request | Minecraft `/vc` | Endstone → Render → VoiceCraft Server | VoiceCraft entity binding |
+| Unbind request | Minecraft `/vc` | Endstone → Render → VoiceCraft Server | VoiceCraft entity binding |
+| Relay status | VoiceCraft Server / Endstone | Through Render | Opposite bridge peer |
+| Voice audio | VoiceCraft Client | UDP directly to VoiceCraft Server | VoiceCraft Server |
+| Routed voice audio | VoiceCraft Server | UDP directly to clients | Nearby VoiceCraft Clients |
 
 ## Why Render Is Used
 
-The Minecraft server and Android may be on completely different networks. Both sides make an outbound WSS connection to Render, so the Minecraft server does not need to connect directly to Android for player-state and binding traffic.
+The Minecraft server and VoiceCraft Server may be on completely different networks. Both sides make an outbound WSS connection to Render, so the Minecraft server does not need to connect directly to VoiceCraft Server for player-state and binding traffic.
 
 ```text
-Endstone ───────┐
-                ├── Render Relay ── shared server room
-Android ────────┘
+Endstone ───────────────┐
+                        ├── Render Relay ── shared server room
+VoiceCraft Server ──────┘
 ```
 
 The relay separates connections by `serverId` and authenticates the bridge with the configured secret.
 
 ## VPN / Same-Network Requirement
 
-Render solves the **control/state connection**, but it does not relay VoiceCraft audio. VoiceCraft clients still need direct UDP reachability to Android.
+Render solves the **control/state connection**, but it does not relay VoiceCraft audio. VoiceCraft clients still need direct UDP reachability to VoiceCraft Server.
 
-If the VoiceCraft clients and Android are not already on the same LAN, they should be connected through a VPN or mesh network that gives the devices mutually reachable private IP addresses.
+If the VoiceCraft clients and VoiceCraft Server are not already on the same LAN, they should be connected through a VPN or mesh network that gives the devices mutually reachable private IP addresses.
 
 Examples include:
 
 - **Tailscale**
 - **NordVPN**, when configured with a feature/setup that allows direct device-to-device private networking
-- Another WireGuard/mesh VPN that places Android and the VoiceCraft clients on the same reachable private network
+- Another WireGuard/mesh VPN that places VoiceCraft Server and the VoiceCraft clients on the same reachable private network
 
 ```text
 VoiceCraft Client
@@ -127,10 +124,10 @@ VoiceCraft Client
       │ VPN / virtual LAN
       │ direct VoiceCraft UDP
       ▼
-Android
+VoiceCraft Server
 ```
 
-The important requirement is not the VPN brand itself. The VoiceCraft client must be able to reach Android's VPN/private IP and VoiceCraft UDP port directly.
+The important requirement is not the VPN brand itself. The VoiceCraft client must be able to reach the VoiceCraft Server's VPN/private IP and VoiceCraft UDP port directly.
 
 A normal consumer VPN connection that only sends both devices through an Internet exit server is **not enough** unless it also provides device-to-device connectivity.
 
@@ -138,13 +135,13 @@ A normal consumer VPN connection that only sends both devices through an Interne
 
 | Connection | Needs Render? | Needs direct reachability? | Recommended network |
 |---|---:|---:|---|
-| Endstone ↔ Render | Yes | No direct Android connection required | Normal Internet |
-| Render ↔ Android | Yes | No direct Minecraft connection required | Normal Internet |
-| VoiceCraft Client ↔ Android | No | **Yes** | Same LAN or VPN/mesh network |
+| Endstone ↔ Render | Yes | No direct VoiceCraft Server connection required | Normal Internet |
+| Render ↔ VoiceCraft Server | Yes | No direct Minecraft connection required | Normal Internet |
+| VoiceCraft Client ↔ VoiceCraft Server | No | **Yes** | Same LAN or VPN/mesh network |
 
 ## Relay Failover
 
-Android can use a primary relay and optional backup relays.
+VoiceCraft Server can use a primary relay and optional backup relays.
 
 ```text
 Primary Relay
@@ -159,16 +156,16 @@ Primary Relay
              └── if unavailable → next backup
 ```
 
-If the active relay becomes unavailable, Android retries and can move to a configured backup relay. Once Endstone and Android are connected to the same working relay again, player-state synchronization continues.
+If the active relay becomes unavailable, VoiceCraft Server retries and can move to a configured backup relay. Once Endstone and VoiceCraft Server are connected to the same working relay again, player-state synchronization continues.
 
-Relay failover only affects **control/state traffic**. Voice audio continues to use the direct UDP path between VoiceCraft clients and Android.
+Relay failover only affects **control/state traffic**. Voice audio continues to use the direct UDP path between VoiceCraft clients and VoiceCraft Server.
 
 ## Voice Path vs Control Path
 
 | Path | Protocol | Purpose |
 |---|---|---|
-| Endstone ↔ Render ↔ Android | WSS | Player state, binding, unbinding, snapshots and bridge status |
-| VoiceCraft Client ↔ Android | VoiceCraft / LiteNetLib UDP | Real-time voice audio |
+| Endstone ↔ Render ↔ VoiceCraft Server | WSS | Player state, binding, unbinding, snapshots and bridge status |
+| VoiceCraft Client ↔ VoiceCraft Server | VoiceCraft / LiteNetLib UDP | Real-time voice audio |
 
 This separation is important: **Render never processes or forwards microphone audio**.
 
@@ -178,12 +175,12 @@ This separation is important: **Render never processes or forwards microphone au
 Minecraft knows where the player is.
 Endstone reads that information.
 Render transports that information.
-Android applies it to VoiceCraft.
+VoiceCraft Server applies it to VoiceCraft.
 VoiceCraft uses it for proximity voice.
 
 Voice audio does NOT go through Render.
-VoiceCraft clients connect directly to Android over UDP.
-If they are on different networks, use a VPN/mesh network so they can reach Android directly.
+VoiceCraft clients connect directly to VoiceCraft Server over UDP.
+If they are on different networks, use a VPN/mesh network so the clients can reach VoiceCraft Server directly.
 ```
 
 ---
