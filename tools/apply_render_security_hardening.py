@@ -30,6 +30,15 @@ def main() -> None:
         "classify live Render deploy as green",
     )
 
+    # Android.OS also defines OperationCanceledException. Qualify the System type
+    # used by Task/CancellationToken so the generated activity always compiles.
+    text = replace_required(
+        text,
+        "        catch (OperationCanceledException)\n",
+        "        catch (System.OperationCanceledException)\n",
+        "qualify Render deploy cancellation exception",
+    )
+
     # Render API keys remain session-only. Cancel deploy polling and wipe the
     # visible field when the Activity is destroyed. Nothing is written to prefs.
     destroy = '''    protected override void OnDestroy()\n    {\n        if (_handler != null && _refreshRunnable != null)\n'''
@@ -41,6 +50,7 @@ def main() -> None:
     print("- Render API key cleared and polling cancelled on Activity destroy")
     print("- Render provisioning logs grouped with Bridge")
     print("- live deploy state classified green")
+    print("- Render deploy cancellation exception qualified for Android build")
 
 
 if __name__ == "__main__":
