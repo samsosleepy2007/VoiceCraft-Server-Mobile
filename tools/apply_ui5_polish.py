@@ -34,10 +34,50 @@ def main() -> None:
 '''
     text = replace_required(text, endstone_connected, "", "remove Endstone bridge connected text")
 
+    # 3) Dashboard: keep ONLINE/OFFLINE in the same address panel as IP/Port,
+    # and remove the decorative progress bar under the server status card.
+    old_top_status = '''        var onlineRow = new LinearLayout(this) { Orientation = Orientation.Horizontal };
+        onlineRow.SetGravity(GravityFlags.CenterVertical);
+        _statusBadge = Pill(T("● ออฟไลน์", "● OFFLINE"), _dark ? Color.Rgb(20, 58, 48) : Color.Rgb(229, 249, 239), Green, true);
+        onlineRow.AddView(_statusBadge, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WrapContent, Dp(32)));
+        body.AddView(onlineRow, Top(Dp(2)));
+        body.AddView(Label("VoiceCraft Server", 18, Ink, true), Top(Dp(12)));
+'''
+    new_top_status = '''        body.AddView(Label("VoiceCraft Server", 18, Ink, true), Top(Dp(2)));
+'''
+    text = replace_required(text, old_top_status, new_top_status, "move dashboard status badge")
+
+    address_title = '''        addressBox.SetPadding(Dp(14), Dp(12), Dp(14), Dp(12));
+        addressBox.AddView(Label(T("ที่อยู่เซิร์ฟเวอร์", "SERVER ADDRESS"), 10, Primary, true));
+'''
+    address_with_status = '''        addressBox.SetPadding(Dp(14), Dp(12), Dp(14), Dp(12));
+        addressBox.AddView(Label(T("ที่อยู่เซิร์ฟเวอร์", "SERVER ADDRESS"), 10, Primary, true));
+
+        var statusRow = new LinearLayout(this) { Orientation = Orientation.Horizontal };
+        statusRow.SetGravity(GravityFlags.CenterVertical);
+        statusRow.AddView(Label(T("สถานะ", "STATUS"), 10, Muted, true), new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WrapContent, 1f));
+        _statusBadge = Pill(T("● ออฟไลน์", "● OFFLINE"), _dark ? Color.Rgb(20, 58, 48) : Color.Rgb(229, 249, 239), Green, true);
+        statusRow.AddView(_statusBadge, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WrapContent, Dp(32)));
+        addressBox.AddView(statusRow, Top(Dp(10)));
+'''
+    text = replace_required(text, address_title, address_with_status, "add status badge to address panel")
+
+    progress = '''        var progress = new ProgressBar(this, null, global::Android.Resource.Attribute.ProgressBarStyleHorizontal)
+        {
+            Indeterminate = false,
+            Progress = 72,
+            Max = 100
+        };
+        running.AddView(progress, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MatchParent, Dp(5)) { TopMargin = Dp(14) });
+'''
+    text = replace_required(text, progress, "", "remove dashboard progress bar")
+
     path.write_text(text, encoding="utf-8")
     print(f"Applied UI5 polish to {path}")
     print("- removed decorative Render Relay connected badge")
     print("- removed decorative Endstone bridge connected text")
+    print("- moved ONLINE/OFFLINE into the server address panel")
+    print("- removed dashboard progress bar")
 
 
 if __name__ == "__main__":
