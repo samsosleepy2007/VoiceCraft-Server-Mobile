@@ -139,9 +139,13 @@ def main() -> None:
     if ui5_refinement.exists():
         subprocess.run([sys.executable, str(ui5_refinement), str(repo)], check=True)
 
-    # The refinement pass generates additional newline references, so run the
-    # source repair once more after it to keep System.Environment unambiguous
-    # from Android.OS.Environment.
+    ui5_polish = repo / "tools" / "apply_ui5_polish.py"
+    if ui5_polish.exists():
+        subprocess.run([sys.executable, str(ui5_polish), str(repo)], check=True)
+
+    # Refinement/polish may generate additional newline references, so run the
+    # source repair once more after both passes to keep System.Environment
+    # unambiguous from Android.OS.Environment.
     if ui5_compile_fix.exists():
         subprocess.run([sys.executable, str(ui5_compile_fix), str(repo)], check=True)
 
