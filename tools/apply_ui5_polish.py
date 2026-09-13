@@ -187,6 +187,11 @@ def main() -> None:
         "colored runtime logs",
     )
 
+    # 5) Runtime Logs: remove the pause control so live logs always update.
+    pause_button = '''        AddButton(buttons, T("หยุดชั่วคราว", "PAUSE"), () => { _logPaused = !_logPaused; RefreshLog(true); });
+'''
+    text = replace_required(text, pause_button, "", "remove log pause button")
+
     path.write_text(text, encoding="utf-8")
     print(f"Applied UI5 polish to {path}")
     print("- removed decorative Render Relay connected badge")
@@ -194,6 +199,7 @@ def main() -> None:
     print("- moved ONLINE/OFFLINE into the server address panel")
     print("- removed dashboard progress bar")
     print("- added white/green/yellow/red runtime log colors")
+    print("- removed log pause control")
 
 
 if __name__ == "__main__":
