@@ -87,6 +87,14 @@ def main() -> None:
     {
         var value = row ?? string.Empty;
 
+        // The local McHttp health probe intentionally sends an unauthenticated
+        // GET / request. A 401/403 proves the listener answered and is not a
+        // runtime failure, so keep this specific probe response neutral.
+        if (value.Contains("McHttp raw HTTP response:", StringComparison.OrdinalIgnoreCase)
+            && (value.Contains("403 Forbidden", StringComparison.OrdinalIgnoreCase)
+                || value.Contains("401 Unauthorized", StringComparison.OrdinalIgnoreCase)))
+            return Color.White;
+
         if (HasLogCategory(value, "FATAL")
             || value.Contains(" error", StringComparison.OrdinalIgnoreCase)
             || value.Contains("exception", StringComparison.OrdinalIgnoreCase)
@@ -200,6 +208,7 @@ def main() -> None:
     print("- removed dashboard progress bar")
     print("- added white/green/yellow/red runtime log colors")
     print("- removed log pause control")
+    print("- treated expected McHttp probe 401/403 as normal")
 
 
 if __name__ == "__main__":
