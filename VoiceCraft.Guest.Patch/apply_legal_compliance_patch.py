@@ -143,6 +143,10 @@ def main() -> None:
     if ui5_polish.exists():
         subprocess.run([sys.executable, str(ui5_polish), str(repo)], check=True)
 
+    render_api_core = repo / "tools" / "apply_render_api_core.py"
+    if render_api_core.exists():
+        subprocess.run([sys.executable, str(render_api_core), str(repo)], check=True)
+
     # Refinement/polish may generate additional newline references, so run the
     # source repair once more after both passes to keep System.Environment
     # unambiguous from Android.OS.Environment.
