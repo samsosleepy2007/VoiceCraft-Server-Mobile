@@ -147,9 +147,11 @@ def main() -> None:
     if render_api_core.exists():
         subprocess.run([sys.executable, str(render_api_core), str(repo)], check=True)
 
-    # Refinement/polish may generate additional newline references, so run the
-    # source repair once more after both passes to keep System.Environment
-    # unambiguous from Android.OS.Environment.
+    render_relay_setup = repo / "tools" / "apply_render_relay_setup.py"
+    if render_relay_setup.exists():
+        subprocess.run([sys.executable, str(render_relay_setup), str(repo)], check=True)
+
+    # UI generators may add newline references, so repair them after all UI passes.
     if ui5_compile_fix.exists():
         subprocess.run([sys.executable, str(ui5_compile_fix), str(repo)], check=True)
 
