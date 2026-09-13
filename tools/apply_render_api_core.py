@@ -11,6 +11,7 @@ using System.Text.Json;
 namespace VoiceCraft.Server.Android;
 
 internal sealed record RenderWorkspaceOption(string Id, string Name, string Email);
+internal sealed record RenderCreatedService(string Id, string Name, string Url);
 
 internal sealed class RenderApiException : Exception
 {
@@ -25,6 +26,9 @@ internal sealed class RenderApiException : Exception
 
 internal static class RenderApiClient
 {
+    private const string RelayRepository = "https://github.com/samsosleepy2007/VoiceCraft-Server-Mobile-Unofficial";
+    private const string RelayBranch = "main";
+    private const string RelayRootDir = "VoiceCraft.Bridge.Relay";
     private static readonly Uri BaseUri = new("https://api.render.com/v1/");
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
     private static readonly HttpClient Client = CreateClient();
@@ -80,6 +84,79 @@ internal static class RenderApiClient
         if (result.Count == 0)
             throw new RenderApiException("No Render workspace is available for this API key.");
         return result;
+    }
+
+    internal static async Task<RenderCreatedService> CreateRelayServiceAsync(
+        string apiKey,
+        string ownerId,
+        string serviceName,
+        string region,
+        string plan,
+        string bridgeSecret,
+        CancellationToken cancellationToken = default)
+    {
+        ValidateApiKey(apiKey);
+        if (string.IsNullOrWhiteSpace(ownerId))
+            throw new RenderApiException("Select a Render workspace first.");
+
+        serviceName = serviceName.Trim().ToLowerInvariant();
+        if (serviceName.Length is < 2 or > 63
+            || serviceName.Any(ch => !(char.IsAsciiLetterOrDigit(ch) || ch == '-')))
+            throw new RenderApiException("Service name can use only letters, numbers, and hyphens.");
+
+        region = NormalizeRegion(region);
+        plan = NormalizePlan(plan);
+        if (string.IsNullOrWhiteSpace(bridgeSecret) || bridgeSecret.Length < 16)
+            throw new RenderApiException("Bridge Secret must contain at least 16 characters.");
+
+        var body = new
+        {
+            type = "web_service",
+            name = serviceName,
+            ownerId,
+            repo = RelayRepository,
+            branch = RelayBranch,
+            rootDir = RelayRootDir,
+            autoDeploy = "yes",
+            envVars = new[]
+            {
+                new { key = "BRIDGE_SECRET", value = bridgeSecret }
+            },
+            serviceDetails = new
+            {
+                runtime = "node",
+                plan,
+                region,
+                healthCheckPath = "/health",
+                envSpecificDetails = new
+                {
+                    buildCommand = "npm install --omit=dev",
+                    startCommand = "npm start"
+                }
+            }
+        };
+
+        using var document = await SendJsonAsync(
+            HttpMethod.Post,
+            "services",
+            apiKey,
+            body,
+            cancellationToken);
+
+        var service = UnwrapObject(document.RootElement, "service");
+        var id = ReadString(service, "id");
+        var name = ReadString(service, "name");
+        var url = ReadString(service, "url");
+        if (service.ValueKind == JsonValueKind.Object
+            && service.TryGetProperty("serviceDetails", out var details)
+            && details.ValueKind == JsonValueKind.Object)
+            url = ReadString(details, "url") is { Length: > 0 } nestedUrl ? nestedUrl : url;
+
+        if (string.IsNullOrWhiteSpace(id))
+            throw new RenderApiException("Render created the service but did not return a service ID.");
+        if (string.IsNullOrWhiteSpace(name))
+            name = serviceName;
+        return new RenderCreatedService(id, name, url);
     }
 
     internal static async Task<JsonDocument> SendJsonAsync(
@@ -153,10 +230,35 @@ internal static class RenderApiClient
         }
     }
 
+    private static string NormalizeRegion(string value) => value.Trim().ToLowerInvariant() switch
+    {
+        "singapore" => "singapore",
+        "oregon" => "oregon",
+        "frankfurt" => "frankfurt",
+        "ohio" => "ohio",
+        "virginia" => "virginia",
+        _ => throw new RenderApiException("Unsupported Render region.")
+    };
+
+    private static string NormalizePlan(string value) => value.Trim().ToLowerInvariant() switch
+    {
+        "free" => "free",
+        _ => throw new RenderApiException("Unsupported Render plan.")
+    };
+
     private static void ValidateApiKey(string apiKey)
     {
         if (string.IsNullOrWhiteSpace(apiKey) || apiKey.Trim().Length < 12)
             throw new RenderApiException("Enter a valid Render API key.");
+    }
+
+    private static JsonElement UnwrapObject(JsonElement element, string property)
+    {
+        if (element.ValueKind == JsonValueKind.Object
+            && element.TryGetProperty(property, out var nested)
+            && nested.ValueKind == JsonValueKind.Object)
+            return nested;
+        return element;
     }
 
     private static string ReadString(JsonElement element, string property)
@@ -213,6 +315,7 @@ def main() -> None:
     print("- API key is request-scoped and never persisted by the client")
     print("- redirects are blocked to avoid credential forwarding")
     print("- workspace discovery uses GET /v1/owners")
+    print("- relay creation uses the stable main branch and BRIDGE_SECRET env var")
 
 
 if __name__ == "__main__":
