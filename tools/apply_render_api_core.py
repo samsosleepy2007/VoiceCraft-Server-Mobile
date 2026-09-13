@@ -12,6 +12,7 @@ namespace VoiceCraft.Server.Android;
 
 internal sealed record RenderWorkspaceOption(string Id, string Name, string Email);
 internal sealed record RenderCreatedService(string Id, string Name, string Url);
+internal sealed record RenderDeploySnapshot(string Id, string Status);
 
 internal sealed class RenderApiException : Exception
 {
@@ -41,46 +42,27 @@ internal static class RenderApiClient
             ConnectTimeout = TimeSpan.FromSeconds(12),
             PooledConnectionLifetime = TimeSpan.FromMinutes(5)
         };
-        return new HttpClient(handler, disposeHandler: true)
-        {
-            Timeout = TimeSpan.FromSeconds(30)
-        };
+        return new HttpClient(handler, disposeHandler: true) { Timeout = TimeSpan.FromSeconds(30) };
     }
 
-    internal static async Task<IReadOnlyList<RenderWorkspaceOption>> ListWorkspacesAsync(
-        string apiKey,
-        CancellationToken cancellationToken = default)
+    internal static async Task<IReadOnlyList<RenderWorkspaceOption>> ListWorkspacesAsync(string apiKey, CancellationToken cancellationToken = default)
     {
         ValidateApiKey(apiKey);
-        using var document = await SendJsonAsync(
-            HttpMethod.Get,
-            "owners?limit=100",
-            apiKey,
-            body: null,
-            cancellationToken);
-
+        using var document = await SendJsonAsync(HttpMethod.Get, "owners?limit=100", apiKey, null, cancellationToken);
         if (document.RootElement.ValueKind != JsonValueKind.Array)
             throw new RenderApiException("Render returned an unexpected workspace response.");
 
         var result = new List<RenderWorkspaceOption>();
         foreach (var item in document.RootElement.EnumerateArray())
         {
-            var owner = item;
-            if (item.ValueKind == JsonValueKind.Object
-                && item.TryGetProperty("owner", out var nestedOwner)
-                && nestedOwner.ValueKind == JsonValueKind.Object)
-                owner = nestedOwner;
-
+            var owner = UnwrapObject(item, "owner");
             var id = ReadString(owner, "id");
             var name = ReadString(owner, "name");
             var email = ReadString(owner, "email");
             if (string.IsNullOrWhiteSpace(id))
                 continue;
-            if (string.IsNullOrWhiteSpace(name))
-                name = id;
-            result.Add(new RenderWorkspaceOption(id, name, email));
+            result.Add(new RenderWorkspaceOption(id, string.IsNullOrWhiteSpace(name) ? id : name, email));
         }
-
         if (result.Count == 0)
             throw new RenderApiException("No Render workspace is available for this API key.");
         return result;
@@ -100,8 +82,7 @@ internal static class RenderApiClient
             throw new RenderApiException("Select a Render workspace first.");
 
         serviceName = serviceName.Trim().ToLowerInvariant();
-        if (serviceName.Length is < 2 or > 63
-            || serviceName.Any(ch => !(char.IsAsciiLetterOrDigit(ch) || ch == '-')))
+        if (serviceName.Length is < 2 or > 63 || serviceName.Any(ch => !(char.IsAsciiLetterOrDigit(ch) || ch == '-')))
             throw new RenderApiException("Service name can use only letters, numbers, and hyphens.");
 
         region = NormalizeRegion(region);
@@ -118,10 +99,7 @@ internal static class RenderApiClient
             branch = RelayBranch,
             rootDir = RelayRootDir,
             autoDeploy = "yes",
-            envVars = new[]
-            {
-                new { key = "BRIDGE_SECRET", value = bridgeSecret }
-            },
+            envVars = new[] { new { key = "BRIDGE_SECRET", value = bridgeSecret } },
             serviceDetails = new
             {
                 runtime = "node",
@@ -136,27 +114,34 @@ internal static class RenderApiClient
             }
         };
 
-        using var document = await SendJsonAsync(
-            HttpMethod.Post,
-            "services",
-            apiKey,
-            body,
-            cancellationToken);
+        using var document = await SendJsonAsync(HttpMethod.Post, "services", apiKey, body, cancellationToken);
+        return ParseService(document.RootElement, serviceName);
+    }
 
-        var service = UnwrapObject(document.RootElement, "service");
-        var id = ReadString(service, "id");
-        var name = ReadString(service, "name");
-        var url = ReadString(service, "url");
-        if (service.ValueKind == JsonValueKind.Object
-            && service.TryGetProperty("serviceDetails", out var details)
-            && details.ValueKind == JsonValueKind.Object)
-            url = ReadString(details, "url") is { Length: > 0 } nestedUrl ? nestedUrl : url;
+    internal static async Task<RenderDeploySnapshot> GetLatestDeployAsync(
+        string apiKey,
+        string serviceId,
+        CancellationToken cancellationToken = default)
+    {
+        ValidateServiceId(serviceId);
+        var safeId = Uri.EscapeDataString(serviceId.Trim());
+        using var document = await SendJsonAsync(HttpMethod.Get, $"services/{safeId}/deploys?limit=1", apiKey, null, cancellationToken);
+        if (document.RootElement.ValueKind != JsonValueKind.Array || document.RootElement.GetArrayLength() == 0)
+            return new RenderDeploySnapshot(string.Empty, "waiting");
 
-        if (string.IsNullOrWhiteSpace(id))
-            throw new RenderApiException("Render created the service but did not return a service ID.");
-        if (string.IsNullOrWhiteSpace(name))
-            name = serviceName;
-        return new RenderCreatedService(id, name, url);
+        var deploy = UnwrapObject(document.RootElement[0], "deploy");
+        return new RenderDeploySnapshot(ReadString(deploy, "id"), ReadString(deploy, "status"));
+    }
+
+    internal static async Task<RenderCreatedService> GetServiceAsync(
+        string apiKey,
+        string serviceId,
+        CancellationToken cancellationToken = default)
+    {
+        ValidateServiceId(serviceId);
+        var safeId = Uri.EscapeDataString(serviceId.Trim());
+        using var document = await SendJsonAsync(HttpMethod.Get, $"services/{safeId}", apiKey, null, cancellationToken);
+        return ParseService(document.RootElement, string.Empty);
     }
 
     internal static async Task<JsonDocument> SendJsonAsync(
@@ -180,18 +165,12 @@ internal static class RenderApiClient
         request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
         request.Headers.UserAgent.ParseAdd("VoiceCraft-Server-Mobile/1.7.1");
         if (body is not null)
-        {
-            var json = JsonSerializer.Serialize(body, JsonOptions);
-            request.Content = new StringContent(json, Encoding.UTF8, "application/json");
-        }
+            request.Content = new StringContent(JsonSerializer.Serialize(body, JsonOptions), Encoding.UTF8, "application/json");
 
         HttpResponseMessage response;
         try
         {
-            response = await Client.SendAsync(
-                request,
-                HttpCompletionOption.ResponseHeadersRead,
-                cancellationToken);
+            response = await Client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
@@ -207,18 +186,15 @@ internal static class RenderApiClient
             var responseText = await response.Content.ReadAsStringAsync(cancellationToken);
             if ((int)response.StatusCode is >= 300 and < 400)
                 throw new RenderApiException("Render API redirect was blocked for credential safety.", response.StatusCode);
-
             if (!response.IsSuccessStatusCode)
             {
-                var safe = ExtractErrorMessage(responseText);
-                safe = Redact(safe, apiKey);
+                var safe = Redact(ExtractErrorMessage(responseText), apiKey);
                 throw new RenderApiException(
                     string.IsNullOrWhiteSpace(safe)
                         ? $"Render API returned HTTP {(int)response.StatusCode}."
                         : $"Render API returned HTTP {(int)response.StatusCode}: {safe}",
                     response.StatusCode);
             }
-
             try
             {
                 return JsonDocument.Parse(string.IsNullOrWhiteSpace(responseText) ? "{}" : responseText);
@@ -230,13 +206,31 @@ internal static class RenderApiClient
         }
     }
 
+    private static RenderCreatedService ParseService(JsonElement source, string fallbackName)
+    {
+        var service = UnwrapObject(source, "service");
+        var id = ReadString(service, "id");
+        var name = ReadString(service, "name");
+        var url = ReadString(service, "url");
+        if (service.ValueKind == JsonValueKind.Object
+            && service.TryGetProperty("serviceDetails", out var details)
+            && details.ValueKind == JsonValueKind.Object)
+        {
+            var nestedUrl = ReadString(details, "url");
+            if (!string.IsNullOrWhiteSpace(nestedUrl))
+                url = nestedUrl;
+        }
+        if (string.IsNullOrWhiteSpace(id))
+            throw new RenderApiException("Render did not return a service ID.");
+        if (string.IsNullOrWhiteSpace(name))
+            name = fallbackName;
+        return new RenderCreatedService(id, name, url);
+    }
+
     private static string NormalizeRegion(string value) => value.Trim().ToLowerInvariant() switch
     {
-        "singapore" => "singapore",
-        "oregon" => "oregon",
-        "frankfurt" => "frankfurt",
-        "ohio" => "ohio",
-        "virginia" => "virginia",
+        "singapore" => "singapore", "oregon" => "oregon", "frankfurt" => "frankfurt",
+        "ohio" => "ohio", "virginia" => "virginia",
         _ => throw new RenderApiException("Unsupported Render region.")
     };
 
@@ -250,6 +244,12 @@ internal static class RenderApiClient
     {
         if (string.IsNullOrWhiteSpace(apiKey) || apiKey.Trim().Length < 12)
             throw new RenderApiException("Enter a valid Render API key.");
+    }
+
+    private static void ValidateServiceId(string serviceId)
+    {
+        if (string.IsNullOrWhiteSpace(serviceId) || serviceId.Length > 128)
+            throw new RenderApiException("Invalid Render service ID.");
     }
 
     private static JsonElement UnwrapObject(JsonElement element, string property)
@@ -281,15 +281,12 @@ internal static class RenderApiClient
             {
                 foreach (var key in new[] { "message", "error", "detail" })
                 {
-                    if (doc.RootElement.TryGetProperty(key, out var value)
-                        && value.ValueKind == JsonValueKind.String)
+                    if (doc.RootElement.TryGetProperty(key, out var value) && value.ValueKind == JsonValueKind.String)
                         return value.GetString() ?? string.Empty;
                 }
             }
         }
-        catch (JsonException)
-        {
-        }
+        catch (JsonException) { }
         return string.Empty;
     }
 
@@ -308,14 +305,12 @@ def main() -> None:
     android = root / "VoiceCraft.Server.Android"
     if not android.is_dir():
         raise SystemExit(f"Android project not found: {android}")
-
     target = android / "RenderApiClient.cs"
     target.write_text(RENDER_API_CLIENT, encoding="utf-8")
     print(f"Generated Render API core client: {target}")
-    print("- API key is request-scoped and never persisted by the client")
-    print("- redirects are blocked to avoid credential forwarding")
-    print("- workspace discovery uses GET /v1/owners")
-    print("- relay creation uses the stable main branch and BRIDGE_SECRET env var")
+    print("- session-only Bearer API key; redirects blocked")
+    print("- workspace discovery, web-service creation, deploy status and service retrieval")
+    print("- relay source pinned to stable main branch with BRIDGE_SECRET env var")
 
 
 if __name__ == "__main__":

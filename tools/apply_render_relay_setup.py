@@ -26,6 +26,7 @@ def main() -> None:
     private IReadOnlyList<RenderWorkspaceOption> _renderWorkspaceOptions = Array.Empty<RenderWorkspaceOption>();
     private string _renderCreatedServiceId = string.Empty;
     private string _renderCreatedServiceUrl = string.Empty;
+    private CancellationTokenSource? _renderProvisionCts;
 '''
     text = replace_required(text, fields_anchor, fields, "Render UI fields")
 
@@ -209,6 +210,11 @@ def main() -> None:
             RefreshBridgePreview();
         }
 
+        _renderProvisionCts?.Cancel();
+        _renderProvisionCts?.Dispose();
+        _renderProvisionCts = new CancellationTokenSource();
+        var token = _renderProvisionCts.Token;
+
         SetRenderCreateEnabled(false);
         if (_renderConnect != null)
             _renderConnect.Enabled = false;
@@ -217,31 +223,27 @@ def main() -> None:
         try
         {
             var workspace = _renderWorkspaceOptions[workspaceIndex];
-            var created = await RenderApiClient.CreateRelayServiceAsync(
-                apiKey,
-                workspace.Id,
-                serviceName,
-                region,
-                plan,
-                secret);
+            var created = await RenderApiClient.CreateRelayServiceAsync(apiKey, workspace.Id, serviceName, region, plan, secret, token);
             _renderCreatedServiceId = created.Id;
             _renderCreatedServiceUrl = created.Url;
-            SetRenderProvisionStatus(
-                T("สร้าง Web Service สำเร็จ • Render เริ่ม deploy ครั้งแรกแล้ว", "Web Service created • Render started the first deploy"),
-                Green);
             AndroidRuntimeLog.Append("RENDER", $"Relay service created id={created.Id} name={created.Name}; Bridge Secret hidden");
+            await MonitorRenderRelayDeployAsync(apiKey, created, token);
+        }
+        catch (OperationCanceledException)
+        {
+            SetRenderProvisionStatus(T("หยุดติดตามการ Deploy แล้ว", "Deploy monitoring stopped"), Amber);
         }
         catch (RenderApiException ex)
         {
             SetRenderCreateEnabled(true);
             SetRenderProvisionStatus(ex.Message, Red);
-            AndroidRuntimeLog.Append("RENDER", $"Relay service creation failed: {ex.Message}; secrets hidden");
+            AndroidRuntimeLog.Append("RENDER", $"Relay provisioning failed: {ex.Message}; secrets hidden");
         }
         catch (Exception ex)
         {
             SetRenderCreateEnabled(true);
             SetRenderProvisionStatus(T("สร้าง Render Web Service ไม่สำเร็จ", "Unable to create Render Web Service"), Red);
-            AndroidRuntimeLog.Append("RENDER", $"Relay service creation failed: {ex.GetType().Name}; secrets hidden");
+            AndroidRuntimeLog.Append("RENDER", $"Relay provisioning failed: {ex.GetType().Name}; secrets hidden");
         }
         finally
         {
@@ -250,27 +252,106 @@ def main() -> None:
         }
     }
 
+    private async Task MonitorRenderRelayDeployAsync(string apiKey, RenderCreatedService created, CancellationToken token)
+    {
+        SetRenderProvisionStatus(T("สร้าง Service แล้ว • กำลัง Deploy…", "Service created • deploying…"), Amber);
+        for (var attempt = 0; attempt < 60; attempt++)
+        {
+            token.ThrowIfCancellationRequested();
+            var deploy = await RenderApiClient.GetLatestDeployAsync(apiKey, created.Id, token);
+            var status = (deploy.Status ?? string.Empty).Trim().ToLowerInvariant();
+
+            if (IsRenderDeploySuccessful(status))
+            {
+                var service = await RenderApiClient.GetServiceAsync(apiKey, created.Id, token);
+                var url = string.IsNullOrWhiteSpace(service.Url) ? created.Url : service.Url;
+                if (string.IsNullOrWhiteSpace(url))
+                    throw new RenderApiException("Render deploy is live but no public service URL was returned.");
+
+                ApplyCreatedRenderRelayUrl(url);
+                SetRenderProvisionStatus(
+                    T($"Render Relay พร้อมใช้งาน • {url}", $"Render Relay is LIVE • {url}"),
+                    Green);
+                AndroidRuntimeLog.Append("RENDER", $"Relay deploy live service={created.Id}; URL configured automatically; secrets hidden");
+                if (_renderApiKey != null)
+                    _renderApiKey.Text = string.Empty;
+                return;
+            }
+
+            if (IsRenderDeployFailed(status))
+            {
+                SetRenderCreateEnabled(true);
+                SetRenderProvisionStatus(
+                    T($"Render Deploy ล้มเหลว • {status}", $"Render deploy failed • {status}"),
+                    Red);
+                AndroidRuntimeLog.Append("RENDER", $"Relay deploy failed service={created.Id} status={status}; secrets hidden");
+                return;
+            }
+
+            var displayStatus = string.IsNullOrWhiteSpace(status) ? "waiting" : status;
+            SetRenderProvisionStatus(
+                T($"กำลัง Deploy… • {displayStatus}", $"Deploying… • {displayStatus}"),
+                Amber);
+            await Task.Delay(TimeSpan.FromSeconds(5), token);
+        }
+
+        SetRenderCreateEnabled(true);
+        SetRenderProvisionStatus(
+            T("Render ยัง Deploy ไม่เสร็จภายในเวลาที่กำหนด ตรวจสอบต่อใน Render Dashboard", "Render is still deploying. Check the Render Dashboard for progress."),
+            Amber);
+        AndroidRuntimeLog.Append("RENDER", $"Relay deploy monitoring timed out service={created.Id}; secrets hidden");
+    }
+
+    private static bool IsRenderDeploySuccessful(string status) =>
+        status is "live" or "succeeded" or "successful" or "deployed";
+
+    private static bool IsRenderDeployFailed(string status) =>
+        status.Contains("failed", StringComparison.OrdinalIgnoreCase)
+        || status.Contains("canceled", StringComparison.OrdinalIgnoreCase)
+        || status.Contains("cancelled", StringComparison.OrdinalIgnoreCase)
+        || status.Contains("deactivated", StringComparison.OrdinalIgnoreCase);
+
+    private void ApplyCreatedRenderRelayUrl(string serviceUrl)
+    {
+        if (!Uri.TryCreate(serviceUrl, UriKind.Absolute, out var uri)
+            || !uri.Scheme.Equals("https", StringComparison.OrdinalIgnoreCase)
+            || string.IsNullOrWhiteSpace(uri.Host))
+            throw new RenderApiException("Render returned an invalid public service URL.");
+
+        var cleanUrl = uri.GetLeftPart(UriPartial.Authority).TrimEnd('/');
+        _renderCreatedServiceUrl = cleanUrl;
+        if (_renderUrl != null)
+            _renderUrl.Text = cleanUrl;
+        UpdateWebSocketFromRenderUrl();
+
+        var websocket = MakeWebSocketUrl(cleanUrl);
+        if (!IsBridgeUrlValid(websocket))
+            throw new RenderApiException("Unable to generate the Render Relay WebSocket URL.");
+        ServerPreferences.SaveBridge(this, true, websocket, CurrentServerId(), CurrentSecret());
+        RefreshBridgePreview();
+    }
+
 '''
     text = replace_required(text, methods_anchor, methods + methods_anchor, "Render provisioning methods")
 
     path.write_text(text, encoding="utf-8")
     final = path.read_text(encoding="utf-8")
     required = [
-        "private EditText? _renderApiKey;",
-        "CONNECT TO RENDER",
-        "CREATE WEB SERVICE",
-        "RenderApiClient.ListWorkspacesAsync(apiKey)",
         "RenderApiClient.CreateRelayServiceAsync(",
-        "Bridge Secret hidden",
+        "RenderApiClient.GetLatestDeployAsync(",
+        "RenderApiClient.GetServiceAsync(",
+        "ApplyCreatedRenderRelayUrl(url)",
+        "ServerPreferences.SaveBridge(this, true, websocket",
     ]
     missing = [value for value in required if value not in final]
     if missing:
         raise RuntimeError(f"Render setup UI validation failed: {missing}")
 
     print(f"Applied Render Relay provisioning UI to {path}")
-    print("- session-only API key and workspace discovery")
-    print("- service name, region and plan controls")
-    print("- create Web Service action with automatic Bridge Secret generation")
+    print("- creates the web service and generated Bridge Secret")
+    print("- follows the initial deploy until live/failed")
+    print("- auto-configures https://...onrender.com -> wss://.../bridge")
+    print("- clears the API key field after a successful live deploy")
 
 
 if __name__ == "__main__":
