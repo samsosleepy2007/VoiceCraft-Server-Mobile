@@ -28,9 +28,16 @@ def main() -> None:
 '''
     text = replace_required(text, relay_with_badge, relay_plain, "remove Render Relay connected badge")
 
+    # 2) Endstone Integration: remove the decorative bridge-connected text.
+    # Real bridge state remains visible from Dashboard and Runtime Logs.
+    endstone_connected = '''        endstone.AddView(Label(T("● Minecraft bridge connected", "● Minecraft bridge connected"), 11, Green, true), Top(Dp(8)));
+'''
+    text = replace_required(text, endstone_connected, "", "remove Endstone bridge connected text")
+
     path.write_text(text, encoding="utf-8")
     print(f"Applied UI5 polish to {path}")
     print("- removed decorative Render Relay connected badge")
+    print("- removed decorative Endstone bridge connected text")
 
 
 if __name__ == "__main__":
