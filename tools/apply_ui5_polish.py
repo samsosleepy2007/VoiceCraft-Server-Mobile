@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 from pathlib import Path
+import re
 import sys
 
 
@@ -7,6 +8,13 @@ def replace_required(text: str, old: str, new: str, label: str) -> str:
     if old not in text:
         raise RuntimeError(f"UI5 polish failed: {label}")
     return text.replace(old, new, 1)
+
+
+def sub_required(text: str, pattern: str, replacement: str, label: str) -> str:
+    changed, count = re.subn(pattern, replacement, text, count=1, flags=re.S)
+    if count != 1:
+        raise RuntimeError(f"UI5 polish failed: {label} ({count})")
+    return changed
 
 
 def main() -> None:
@@ -72,12 +80,120 @@ def main() -> None:
 '''
     text = replace_required(text, progress, "", "remove dashboard progress bar")
 
+    # 4) Runtime Logs: color each visible line by meaning.
+    # Priority is red errors, explicit green success, yellow reconnect/failover,
+    # then white for ordinary runtime status.
+    colored_refresh = '''    private Color LogColorForRow(string row)
+    {
+        var value = row ?? string.Empty;
+
+        if (HasLogCategory(value, "FATAL")
+            || value.Contains(" error", StringComparison.OrdinalIgnoreCase)
+            || value.Contains("exception", StringComparison.OrdinalIgnoreCase)
+            || value.Contains("fatal", StringComparison.OrdinalIgnoreCase)
+            || value.Contains("failed", StringComparison.OrdinalIgnoreCase)
+            || value.Contains("failure", StringComparison.OrdinalIgnoreCase)
+            || value.Contains("unauthorized", StringComparison.OrdinalIgnoreCase)
+            || value.Contains("forbidden", StringComparison.OrdinalIgnoreCase)
+            || value.Contains("invalid", StringComparison.OrdinalIgnoreCase)
+            || value.Contains("unable to", StringComparison.OrdinalIgnoreCase)
+            || value.Contains("cannot ", StringComparison.OrdinalIgnoreCase))
+            return Red;
+
+        if (value.Contains("connected successfully", StringComparison.OrdinalIgnoreCase)
+            || value.Contains("reconnected successfully", StringComparison.OrdinalIgnoreCase)
+            || value.Contains("connection established", StringComparison.OrdinalIgnoreCase)
+            || value.Contains("bridge connected", StringComparison.OrdinalIgnoreCase)
+            || value.Contains("relay connected", StringComparison.OrdinalIgnoreCase)
+            || value.Contains("voice client connected", StringComparison.OrdinalIgnoreCase)
+            || value.Contains("bound successfully", StringComparison.OrdinalIgnoreCase))
+            return Green;
+
+        if (value.Contains("disconnected", StringComparison.OrdinalIgnoreCase)
+            || value.Contains("connection lost", StringComparison.OrdinalIgnoreCase)
+            || value.Contains("retrying", StringComparison.OrdinalIgnoreCase)
+            || value.Contains("retry ", StringComparison.OrdinalIgnoreCase)
+            || value.Contains("reconnecting", StringComparison.OrdinalIgnoreCase)
+            || value.Contains("switching relay", StringComparison.OrdinalIgnoreCase)
+            || value.Contains("failover", StringComparison.OrdinalIgnoreCase)
+            || value.Contains("timed out", StringComparison.OrdinalIgnoreCase)
+            || value.Contains("timeout", StringComparison.OrdinalIgnoreCase))
+            return Amber;
+
+        if (value.Contains(" connected", StringComparison.OrdinalIgnoreCase)
+            || value.Contains("online", StringComparison.OrdinalIgnoreCase)
+            || value.Contains("ready", StringComparison.OrdinalIgnoreCase))
+            return Green;
+
+        return Color.White;
+    }
+
+    private void RefreshLog(bool force = false)
+    {
+        if (_logView == null || _logPaused)
+            return;
+        var version = AndroidRuntimeLog.Version;
+        if (!force && version == _renderedLogVersion)
+            return;
+        _renderedLogVersion = version;
+
+        var raw = AndroidRuntimeLog.Snapshot(false);
+        var rows = string.IsNullOrWhiteSpace(raw)
+            ? Array.Empty<string>()
+            : raw.Split(global::System.Environment.NewLine, StringSplitOptions.RemoveEmptyEntries)
+                .Where(row => !IsRoutineUiLogRow(row))
+                .Where(row => MatchesLogFilter(row, _logFilter))
+                .ToArray();
+
+        var query = _logSearch?.Text?.Trim();
+        var visible = new List<(string Text, Color Color)>();
+        foreach (var row in rows)
+        {
+            var display = LocalizeLogText(row);
+            if (!string.IsNullOrWhiteSpace(query)
+                && !display.Contains(query, StringComparison.OrdinalIgnoreCase))
+                continue;
+            visible.Add((display, LogColorForRow(row)));
+        }
+
+        if (visible.Count == 0)
+        {
+            _logView.Text = T("(ไม่พบ Log ที่ตรงเงื่อนไข)", "(no matching log entries)");
+            _logView.SetTextColor(Color.White);
+            return;
+        }
+
+        var combined = string.Join(global::System.Environment.NewLine, visible.Select(entry => entry.Text));
+        var styled = new global::Android.Text.SpannableStringBuilder(combined);
+        var offset = 0;
+        foreach (var entry in visible)
+        {
+            var end = offset + entry.Text.Length;
+            styled.SetSpan(
+                new global::Android.Text.Style.ForegroundColorSpan(entry.Color),
+                offset,
+                end,
+                global::Android.Text.SpanTypes.ExclusiveExclusive);
+            offset = end + global::System.Environment.NewLine.Length;
+        }
+        _logView.TextFormatted = styled;
+    }
+
+'''
+    text = sub_required(
+        text,
+        r"    private void RefreshLog\(bool force = false\)\n    \{.*?\n    \}\n\n(?=    private void Pulse)",
+        colored_refresh,
+        "colored runtime logs",
+    )
+
     path.write_text(text, encoding="utf-8")
     print(f"Applied UI5 polish to {path}")
     print("- removed decorative Render Relay connected badge")
     print("- removed decorative Endstone bridge connected text")
     print("- moved ONLINE/OFFLINE into the server address panel")
     print("- removed dashboard progress bar")
+    print("- added white/green/yellow/red runtime log colors")
 
 
 if __name__ == "__main__":
